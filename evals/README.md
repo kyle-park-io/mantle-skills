@@ -16,17 +16,63 @@
 - `OPENAI_API_KEY` for `openai/*` models or `OPENROUTER_API_KEY` for `openrouter/*` models
 - a model string in `provider/model` format such as `openai/gpt-5.4` or `openrouter/openai/gpt-5.4`
 
-## Run an Eval
+## Run One Eval
+
+For direct OpenAI Responses API runs, use an `openai/*` model and `OPENAI_API_KEY`:
 
 ```bash
 ./evals/runner/run.sh --skill network-primer --model openai/gpt-5.4
 ```
 
+For OpenRouter runs, use an `openrouter/*` model and `OPENROUTER_API_KEY`:
+
 ```bash
 ./evals/runner/run.sh --skill network-primer --model openrouter/openai/gpt-5.4
 ```
 
+You can also use a different judge model from the answer model. The two models may come from the same provider or different providers:
+
+```bash
+./evals/runner/run.sh \
+  --skill network-primer \
+  --model openrouter/anthropic/claude-sonnet-4 \
+  --judge-model openai/gpt-5.4
+```
+
 The runner writes a JSON report under `evals/results/` with bare-model answers, skill-loaded answers, judged verdicts, and comparison counts.
+
+## Run All Evals
+
+The lowest-friction way to run the full suite is via the provider presets under `evals/runner/presets/`.
+
+Run all evals with OpenAI:
+
+```bash
+OPENAI_API_KEY=... \
+OPENAI_MODEL=openai/gpt-5.4 \
+OPENAI_JUDGE_MODEL=openai/gpt-5.4 \
+./evals/runner/presets/run-all-skills-openai.sh
+```
+
+Run all evals with OpenRouter:
+
+```bash
+OPENROUTER_API_KEY=... \
+OPENROUTER_MODEL=openrouter/openai/gpt-5.4 \
+OPENROUTER_JUDGE_MODEL=openrouter/openai/gpt-5.4 \
+./evals/runner/presets/run-all-skills-openrouter.sh
+```
+
+If you want full control over labels or non-default directory paths, call the batch runner directly:
+
+```bash
+./evals/runner/run-all-skills.sh \
+  --model openrouter/anthropic/claude-sonnet-4 \
+  --judge-model openai/gpt-5.4 \
+  --label claude-vs-gpt-judge
+```
+
+Batch runs write one JSON file per eval suite plus a `summary.json` file under `evals/results/batches/<label>-<timestamp>/`.
 
 ## Current Checked-In Results
 
