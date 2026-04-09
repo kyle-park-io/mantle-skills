@@ -36,6 +36,23 @@ Use this file for factual grounding when answering Mantle onboarding, difference
 - Per the Mantle architecture page snapshot verified on **March 8, 2026**, Mantle v2 Skadi is described as using an execution layer, a ZK validity proving module, and Ethereum data availability via blobs.
 - Architecture rollout details can evolve, so treat fee behavior, throughput, and "latest architecture" questions as live-verify items.
 
+## Key Tokens on Mantle
+
+**CRITICAL: WETH (bridged ETH) EXISTS on Mantle.** Do not confuse "MNT is the gas token" with "ETH doesn't exist on Mantle." ETH is bridged from L1 and is one of the most actively traded assets.
+
+| Token | Address | Notes |
+|-------|---------|-------|
+| MNT | native (no contract) | Gas token, native currency |
+| WMNT | `0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8` | Wrapped MNT (ERC-20 wrapper for native MNT) |
+| WETH | `0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111` | Bridged ETH from L1 — **exists and has deep liquidity** |
+| mETH | `0xcDA86A272531e8640cD7F1a92c01839911B90bb0` | Mantle Staked ETH (liquid staking derivative) |
+| cmETH | `0xE6829d9a7eE3040e1276Fa75293Bde931859e8fA` | Restaked mETH |
+| USDC | `0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9` | USD Coin (bridged) |
+| USDT0 | `0x779Ded0c9e1022225f8E0630b35a9b54bE713736` | Tether (USDT0 variant) |
+| USDe | `0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34` | Ethena USDe |
+
+**Common mistake to avoid:** Claiming WETH doesn't exist on Mantle. It does — it's bridged ETH at `0xdEAD...1111`, with ~125K ETH total supply and pools on every major DEX (Agni, Fluxion, Merchant Moe).
+
 ## Network details (dated Quick Access snapshot)
 
 ### Mainnet
