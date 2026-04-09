@@ -34,8 +34,13 @@ mantle-cli aave withdraw --asset <token> --amount <n|max> --to <addr> --json
 mantle-cli aave markets --json
 
 # Liquidity provision
+mantle-cli lp find-pools --token-a <t> --token-b <t> --json           # ALWAYS START HERE — discover ALL pools
+mantle-cli lp pool-state <pool-or-tokens> --json
+mantle-cli lp suggest-ticks <pool-or-tokens> --json
+mantle-cli lp positions --owner <addr> --json
 mantle-cli lp add --provider <dex> --token-a <t> --token-b <t> --amount-a <n> --amount-b <n> --recipient <addr> --json
 mantle-cli lp remove --provider <dex> --recipient <addr> [--token-id <id> --liquidity <n>] --json
+mantle-cli lp collect-fees --provider <p> --token-id <id> --recipient <addr> --json
 
 # Read operations (no signing needed)
 mantle-cli defi swap-quote --in <token> --out <token> --amount <n> --provider best --json
@@ -112,6 +117,7 @@ All `--json` outputs contain `unsigned_tx` with `to`, `data`, `value`, `chainId`
 - **CLI-FIRST RULE**: ALWAYS use `mantle-cli` commands with `--json` to build unsigned transactions. NEVER manually construct calldata, hex-encode function calls, or extract addresses from text to build transactions yourself. The CLI handles ABI encoding, address validation, pool parameter resolution, and whitelist checks.
 - **NO `from` FIELD**: NEVER add a `from` field to `unsigned_tx` objects. The signer determines `from` from the signing key. Adding `from` breaks Privy and other embedded wallet signers.
 - **NO MANUAL ROUTING**: NEVER manually discover intermediate pools, split multi-hop swaps into separate transactions, or use external aggregators/routing services. The CLI auto-discovers 2-hop routes via bridge tokens (WMNT, USDC, USDT0, USDe, WETH) when no direct pair exists. Just pass `--in` and `--out` — the CLI handles the routing.
+- **FACTORY-FIRST POOL DISCOVERY**: When looking for LP pools, ALWAYS use `mantle-cli lp find-pools` (or `mantle_findPools` MCP tool) which queries factory contracts on-chain. Do NOT rely on DexScreener, subgraphs, or hardcoded lists — they have incomplete coverage.
 - NEVER claim to have signed, broadcast, deployed, or executed any transaction. Do not use phrases like "I executed the swap", "the transaction was submitted", "swap complete", or "funds have been transferred." This skill produces plans only; an external signer/wallet must execute them.
 - Act as a coordinator: when specialized address, risk, or portfolio skills apply, cite or request their output instead of re-deriving those judgments from scratch.
 - In `discovery_only`, do not provide router addresses, approval steps, calldata, or execution sequencing.

@@ -8,6 +8,7 @@ Use this flow for LP operations on Mantle (V3: Agni/Fluxion, LB: Merchant Moe).
 
 ```bash
 # Read operations (no signing needed)
+mantle-cli lp find-pools --token-a USDC --token-b USDe --json  # Discover ALL pools across ALL DEXes
 mantle-cli lp positions --owner 0x... --json          # List all V3 positions
 mantle-cli lp pool-state --token-a USDC --token-b WMNT --fee-tier 10000 --provider agni --json
 mantle-cli lp suggest-ticks --token-a USDC --token-b WMNT --fee-tier 10000 --provider agni --json
@@ -19,9 +20,23 @@ mantle-cli lp remove --provider agni --token-id 12345 --liquidity 1000000 --reci
 mantle-cli lp collect-fees --provider agni --token-id 12345 --recipient 0x... --json
 ```
 
-## Step 1: Pre-operation Discovery
+## Step 1: Pool Discovery — ALWAYS Start Here
 
-Before any LP operation, gather pool state and existing positions:
+**Before any LP operation, use `find-pools` to discover ALL available pools across ALL DEXes.** This queries factory contracts on-chain — the authoritative source. Do NOT rely on DexScreener, subgraphs, or hardcoded pair lists.
+
+```bash
+mantle-cli lp find-pools --token-a USDC --token-b USDe --json
+```
+
+This returns every pool with its DEX provider, fee tier/bin step, pool address, and liquidity status. Example output for USDC/USDe:
+- Agni fee=100 (0.01%) — $1.7M liquidity
+- Merchant Moe bin=1 — active
+
+**Use the results to pick the best pool**, then proceed with pool state reading and LP operations.
+
+## Step 2: Pool State & Tick Suggestions
+
+After picking a pool from Step 1:
 
 ### V3 Pools (Agni/Fluxion)
 ```bash
@@ -41,7 +56,7 @@ mantle-cli lp positions --owner 0x... --json
 mantle-cli defi lb-state --token-a USDC --token-b USDT0 --bin-step 1 --json
 ```
 
-## Step 2: Tick/Bin Range Selection
+## Step 3: Tick/Bin Range Selection
 
 ### V3 (Agni/Fluxion)
 Use `lp suggest-ticks` to get pre-calculated ranges:
@@ -57,7 +72,7 @@ Use `defi lb-state` to get the `active_id`, then:
 - For volatile: use wider range `delta_ids: [-5,-4,...,4,5]`
 - Distribution: uniform `[1e18, 1e18, ...]` for even, or custom weights
 
-## Step 3: Add Liquidity
+## Step 4: Add Liquidity
 
 ### V3
 ```bash
@@ -80,7 +95,7 @@ mantle-cli lp add --provider merchant_moe \
   --recipient 0x... --json
 ```
 
-## Step 4: Fee Collection (V3)
+## Step 5: Fee Collection (V3)
 
 ```bash
 # Check accrued fees first
@@ -91,7 +106,7 @@ mantle-cli lp positions --owner 0x... --json
 mantle-cli lp collect-fees --provider agni --token-id 12345 --recipient 0x... --json
 ```
 
-## Step 5: Remove Liquidity
+## Step 6: Remove Liquidity
 
 ### V3
 ```bash
@@ -114,7 +129,7 @@ mantle-cli lp remove --provider merchant_moe \
   --recipient 0x... --json
 ```
 
-## Step 6: Post-operation Verification
+## Step 7: Post-operation Verification
 
 - Re-read positions: `lp positions --owner 0x... --json`
 - Check token balances changed as expected
@@ -123,6 +138,7 @@ mantle-cli lp remove --provider merchant_moe \
 
 ## Common Pitfalls
 
+- **Skipping pool discovery**: ALWAYS run `lp find-pools` first — it finds pools DexScreener misses (e.g. Agni fee=0.01% stablecoin pools)
 - **Full-range V3 LP**: extremely capital-inefficient — always use `lp suggest-ticks` to pick a range
 - **Wrong active_id for Moe**: always read fresh from `defi lb-state`, never hardcode
 - **Missing approve**: both tokens must be approved for the router/position manager before adding
