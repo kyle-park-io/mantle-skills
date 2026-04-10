@@ -40,6 +40,43 @@ mantle-cli aave markets --json
 - Amount (decimal, or `max` for repay/withdraw)
 - Wallet address (on_behalf_of for supply/borrow/repay, to for withdraw)
 
+## Isolation Mode
+
+Some Aave V3 reserves are **Isolation Mode assets** — when a user's ONLY collateral
+is an Isolation Mode asset, the user enters Isolation Mode which restricts borrowing.
+
+### Isolation Mode assets on Mantle
+
+| Asset | Isolation Mode | Debt Ceiling |
+|-------|:-:|---:|
+| WETH | Yes | $30,000,000 |
+| WMNT | Yes | $2,000,000 |
+| All others | No | — |
+
+### Assets borrowable in Isolation Mode
+
+| Asset | Borrowable in Isolation |
+|-------|:-:|
+| USDC | Yes |
+| USDT0 | Yes |
+| USDe | Yes |
+| GHO | Yes |
+| sUSDe, FBTC, WETH, WMNT, syrupUSDT, wrsETH | **No** |
+
+### Rules
+
+- If the user only has WETH or WMNT as collateral → they are in Isolation Mode
+- In Isolation Mode, **only** USDC, USDT0, USDe, GHO can be borrowed
+- Total debt across all isolation-mode borrowers is capped by the debt ceiling
+- Error `UserInIsolationModeOrLtvZero` (0x5b263df7) = tried to borrow a non-whitelisted asset in Isolation Mode
+
+### Before building a borrow transaction
+
+1. **Check what collateral the user has supplied** (aToken balances or `getUserAccountData`)
+2. If collateral is ONLY an isolation-mode asset → they are in Isolation Mode
+3. Verify the borrowed asset has `borrowableInIsolation = true`
+4. If the user wants to borrow a non-isolation asset (e.g. sUSDe), they must add non-isolation collateral (e.g. USDC) first
+
 ## Step 3: Check balance and allowance
 
 ```bash
@@ -98,3 +135,4 @@ Always use `--json` to get structured output for the signer.
 - **Stale allowance**: use `--owner` flag in approve to auto-skip if sufficient.
 - **Health factor**: borrow and withdraw reduce health factor — check before proceeding.
 - **`max` semantics**: repay max repays full debt; withdraw max withdraws full balance.
+- **Isolation Mode**: WETH and WMNT are Isolation Mode assets. If a user's only collateral is one of these, they can ONLY borrow USDC, USDT0, USDe, or GHO. Attempting to borrow other assets will revert with `UserInIsolationModeOrLtvZero`. Always check collateral type before building a borrow transaction.
