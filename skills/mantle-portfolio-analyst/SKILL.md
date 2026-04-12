@@ -48,14 +48,17 @@ Build deterministic, read-only wallet analysis on Mantle. Enumerate balances, De
 12. Handle partial results from DeFi position tools:
    - If `mantle-cli aave positions` returns `partial: true`, note which reserves had errors and state that per-reserve breakdowns may be incomplete while aggregate USD totals (from `getUserAccountData`) remain accurate.
    - If `mantle-cli aave positions` returns `possible_missing_reserves: true`, warn that Aave governance may have added new reserves not yet tracked by this tool. Aggregate USD totals are still accurate.
-   - Check each position's `collateral_enabled` field. If any position has `supplied > 0` but `collateral_enabled: false`, flag it as a **collateral warning** — the user has deposited tokens but they are NOT counting toward borrowing capacity. This can cause borrow failures.
+   - Check each position's `collateral_enabled` field. If any position has `supplied > 0` but `collateral_enabled: false`:
+     - Run `mantle-cli aave markets --json` to check the reserve's `ltv_bps` field.
+     - If `ltv_bps` is 0 (known examples: sUSDe, FBTC, syrupUSDT, wrsETH on Mantle), classify as **informational** — this asset **cannot** be collateral by governance design, not a user error. Do NOT suggest set-collateral.
+     - If `ltv_bps` > 0, flag as **collateral warning** — the user has deposited tokens but they are NOT counting toward borrowing capacity. This can cause borrow failures. Suggest checking `set-collateral`.
    - If `mantle-cli lp lb-positions` returns positions, note the `coverage: "known_pairs_only"` and `scan_radius` limitations. Explicitly state that positions in distant bins or unlisted pairs are NOT checked.
    - If `mantle-cli lp lb-positions` returns `total_positions: 0`, do NOT conclude the wallet has no LB exposure — only state that no positions were found within the scan range.
 13. Return a formatted report with findings, confidence, and explicit coverage/partial gaps.
 
 ## Guardrails
 
-- Use `mantle-cli` read-only commands only for this skill (`mantle-cli account balance`, `mantle-cli account token-balances`, `mantle-cli account allowances`, `mantle-cli aave positions`, `mantle-cli lp positions`, `mantle-cli lp lb-positions`, `mantle-cli token info`, chain/address validation helpers). Do NOT enable or connect to the MCP server.
+- Use `mantle-cli` read-only commands only for this skill (`mantle-cli account balance`, `mantle-cli account token-balances`, `mantle-cli account allowances`, `mantle-cli aave positions`, `mantle-cli aave markets`, `mantle-cli lp positions`, `mantle-cli lp lb-positions`, `mantle-cli token info`, chain/address validation helpers). Do NOT enable or connect to the MCP server.
 - Stay read-only; do not construct or send transactions.
 - Do not reference direct JSON-RPC calls (`eth_*`) as if they are callable tools in this workflow.
 - Do not guess token decimals or symbols if calls fail.

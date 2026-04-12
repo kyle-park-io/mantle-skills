@@ -71,8 +71,11 @@ Only these assets count toward the competition score:
 | WMNT | `0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8` | 18 |
 | WETH | `0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111` | 18 |
 | USDC | `0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9` | 6 |
+| USDT | `0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE` | 6 |
 | USDT0 | `0x779Ded0c9e1022225f8E0630b35a9b54bE713736` | 6 |
 | MOE | `0x4515A45337F461A11Ff0FE8aBF3c606AE5dC00c9` | 18 |
+
+> **USDT vs USDT0:** Both are official USDT on Mantle. Both have DEX liquidity. Only USDT0 is on Aave V3. Swap USDT↔USDT0 on Merchant Moe (bin_step=1).
 
 ### xStocks RWA Tokens (Fluxion V3 pools, all paired with USDC, fee_tier 3000)
 
@@ -100,10 +103,14 @@ Only these assets count toward the competition score:
 
 **Key pairs:**
 - USDC/USDT0: bin_step=1 (stablecoin)
+- USDC/USDT: bin_step=1 (stablecoin)
+- USDT/USDT0: bin_step=1 (stablecoin conversion)
+- USDe/USDT0: bin_step=1
+- USDe/USDT: bin_step=1
 - WMNT/USDC: bin_step=20
 - WMNT/USDT0: bin_step=20
+- WMNT/USDT: bin_step=15
 - WMNT/USDe: bin_step=20
-- USDe/USDT0: bin_step=1
 
 ### DEX: Agni Finance (Uniswap V3 fork)
 
@@ -135,6 +142,7 @@ Only these assets count toward the competition score:
 | ProtocolDataProvider | `0x487c5c669D9eee6057C44973207101276cf73b68` | read-only queries |
 
 **Supported reserve assets:** WETH, WMNT, USDT0, USDC, USDe, sUSDe, FBTC, syrupUSDT, wrsETH, GHO
+> Only USDT0 is supported — NOT USDT. Swap USDT → USDT0 first if needed.
 
 ## DeFi Operations — Step-by-Step
 
@@ -222,9 +230,12 @@ Only these assets count toward the competition score:
    → Verify collateral_enabled=YES for the supplied asset
    → If collateral_enabled=NO or total_collateral_usd=0:
 
-3. mantle-cli aave set-collateral --asset WMNT --user <wallet> --json
+3. mantle-cli aave set-collateral --asset <supplied_asset> --user <wallet> --json
+   → Use the ACTUAL asset you supplied (e.g. WMNT, WETH, USDC) — not always WMNT
    → Runs preflight diagnostics (checks aToken balance, LTV, reserve status)
+   → If LTV_IS_ZERO: this asset CANNOT be collateral by design — do NOT proceed
    → Sign and broadcast → Enables the supplied asset as collateral
+   → IMPORTANT: the signing wallet MUST be <wallet> itself (set-collateral operates on msg.sender)
 
 4. mantle-cli aave borrow --asset USDC --amount 50 --on-behalf-of <wallet> --json
    → Sign and broadcast → Receive USDC, incur variableDebtUSDC

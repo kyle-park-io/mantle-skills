@@ -12,3 +12,6 @@ __pycache__/
 
 evals/results/*.json
 evals/results/batches/*/logs/
+
+# Claude Code local settings (may contain API keys)
+.claude/settings.local.json

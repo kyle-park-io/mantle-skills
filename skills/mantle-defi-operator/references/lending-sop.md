@@ -35,6 +35,7 @@ mantle-cli aave markets --json
 - Review supply APY, borrow APY, TVL, LTV, and liquidation threshold.
 - Confirm the target asset is a supported Aave V3 reserve.
 - Supported assets: WETH, WMNT, USDT0, USDC, USDe, sUSDe, FBTC, syrupUSDT, wrsETH, GHO.
+- **IMPORTANT:** Only USDT0 is supported on Aave V3, NOT USDT. If the user holds USDT, they must swap USDT → USDT0 on Merchant Moe first (USDT/USDT0 pool, bin_step=1).
 
 ## Step 2: Normalize input
 
@@ -132,7 +133,9 @@ mantle-cli aave positions --user <wallet> --json
 ### Diagnose and fix with set-collateral
 
 ```bash
-mantle-cli aave set-collateral --asset WMNT --user <wallet> --json
+# Use the actual asset that was supplied and needs collateral enabled — NOT always WMNT.
+# Identify it from the positions output: the reserve with supplied > 0 and collateral_enabled=NO.
+mantle-cli aave set-collateral --asset <supplied_asset> --user <wallet> --json
 ```
 
 This tool runs **preflight diagnostics** before building the transaction:
@@ -141,14 +144,14 @@ This tool runs **preflight diagnostics** before building the transaction:
 |-------|---------|---------|
 | aToken balance | `NO_SUPPLY_BALANCE` | User hasn't supplied this asset — supply first |
 | Reserve active | `RESERVE_NOT_ACTIVE` | Reserve deactivated by governance — cannot use |
-| Reserve LTV | `LTV_IS_ZERO` | LTV=0 on-chain — this asset **cannot** be collateral (root cause is governance config, not the collateral flag) |
+| Reserve LTV | `LTV_IS_ZERO` | LTV=0 on-chain — this asset **cannot** be collateral (root cause is governance config, not the collateral flag). Do NOT attempt to set-collateral; it is designed this way. |
 | Reserve frozen | Warning | Supply/borrow frozen but collateral toggle may work |
 | Collateral already enabled | `NO-OP` warning | Flag already set — borrow failure has a different root cause (likely oracle pricing) |
 
-**Important:** The `--user` flag is for diagnostics only. The actual transaction operates on `msg.sender` (the signing wallet).
+**Important:** The `--user` flag is for diagnostics only. The actual transaction operates on `msg.sender` (the signing wallet). The signing wallet MUST be the same address as `<wallet>` — otherwise collateral will be toggled on the wrong account.
 
 If diagnostics show collateral is NOT enabled and LTV > 0:
-1. Sign and broadcast the `set-collateral` unsigned_tx
+1. Sign and broadcast the `set-collateral` unsigned_tx (signer must be `<wallet>`)
 2. Re-check positions to confirm `collateral_enabled` is now YES
 3. Proceed to borrow
 

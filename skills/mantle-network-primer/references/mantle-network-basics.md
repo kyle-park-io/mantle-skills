@@ -48,8 +48,11 @@ Use this file for factual grounding when answering Mantle onboarding, difference
 | mETH | `0xcDA86A272531e8640cD7F1a92c01839911B90bb0` | Mantle Staked ETH (liquid staking derivative) |
 | cmETH | `0xE6829d9a7eE3040e1276Fa75293Bde931859e8fA` | Restaked mETH |
 | USDC | `0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9` | USD Coin (bridged) |
-| USDT0 | `0x779Ded0c9e1022225f8E0630b35a9b54bE713736` | Tether (USDT0 variant) |
+| USDT | `0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE` | Bridged Tether — active on DEXes |
+| USDT0 | `0x779Ded0c9e1022225f8E0630b35a9b54bE713736` | LayerZero OFT Tether — active on DEXes AND Aave V3 |
 | USDe | `0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34` | Ethena USDe |
+
+> **USDT vs USDT0:** Mantle has two official USDT variants. Both have deep DEX liquidity (Merchant Moe, Fluxion). Only USDT0 is supported on Aave V3. A USDT/USDT0 pool (bin_step=1) on Merchant Moe enables direct conversion.
 
 **Common mistake to avoid:** Claiming WETH doesn't exist on Mantle. It does — it's bridged ETH at `0xdEAD...1111`, with ~125K ETH total supply and pools on every major DEX (Agni, Fluxion, Merchant Moe).
 

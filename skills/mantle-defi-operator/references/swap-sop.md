@@ -25,11 +25,7 @@ The CLI outputs `unsigned_tx` with `to`, `data`, `value`, `chainId` — **no `fr
 
 The CLI **automatically discovers multi-hop routes** when no direct pair exists. You do NOT need to find intermediate pools or build multi-step swaps yourself.
 
-**How it works:** when `--in A --out B` has no direct pool, the CLI discovers multi-hop routes using two strategies:
-1. **Static registry** — checks registered pairs for 2-hop paths via bridge tokens (WMNT, USDC, USDT0, USDe, WETH).
-2. **On-chain quoter fallback** — for Merchant Moe, uses the LB Quoter contract to probe all bridge token paths on-chain. This discovers routes not in the static registry.
-
-The result is a single atomic `exactInput` (V3) or multi-token-path (Merchant Moe) transaction.
+**How it works:** when `--in A --out B` has no direct pool, the CLI tries 2-hop paths via bridge tokens (WMNT, USDC, USDT0, USDT, USDe, WETH) using the registered pair registry. If a route `A → bridge → B` exists, it builds a single `exactInput` (V3) or multi-token-path (Merchant Moe) transaction.
 
 **Examples of auto-routed swaps:**
 
@@ -53,6 +49,14 @@ mantle-cli swap build-swap --provider fluxion --in WMNT --out ELSA --amount 0.5 
 - `intent: "swap_multihop"` (instead of `"swap"`)
 - `human_summary` shows the full path (e.g. "Swap 0.5 WMNT → BSB via WMNT → USDT0 → BSB on Fluxion")
 - `warnings` include the route details and fee tiers
+
+## USDT vs USDT0
+
+Mantle has two official USDT variants — both are legitimate and have deep DEX liquidity:
+- **USDT** (`0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE`) — bridged Tether, active on Merchant Moe and other DEXes.
+- **USDT0** (`0x779Ded0c9e1022225f8E0630b35a9b54bE713736`) — LayerZero OFT Tether, active on DEXes AND Aave V3.
+
+When a user says "USDT", clarify which one they mean if context doesn't make it clear. A direct USDT/USDT0 pool (bin_step=1) exists on Merchant Moe for conversion between the two.
 
 ## Step 1: Normalize input
 
