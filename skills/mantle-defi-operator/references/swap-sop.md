@@ -25,7 +25,11 @@ The CLI outputs `unsigned_tx` with `to`, `data`, `value`, `chainId` — **no `fr
 
 The CLI **automatically discovers multi-hop routes** when no direct pair exists. You do NOT need to find intermediate pools or build multi-step swaps yourself.
 
-**How it works:** when `--in A --out B` has no direct pool, the CLI tries 2-hop paths via bridge tokens (WMNT, USDC, USDT0, USDe, WETH) using the registered pair registry. If a route `A → bridge → B` exists, it builds a single `exactInput` (V3) or multi-token-path (Merchant Moe) transaction.
+**How it works:** when `--in A --out B` has no direct pool, the CLI discovers multi-hop routes using two strategies:
+1. **Static registry** — checks registered pairs for 2-hop paths via bridge tokens (WMNT, USDC, USDT0, USDe, WETH).
+2. **On-chain quoter fallback** — for Merchant Moe, uses the LB Quoter contract to probe all bridge token paths on-chain. This discovers routes not in the static registry.
+
+The result is a single atomic `exactInput` (V3) or multi-token-path (Merchant Moe) transaction.
 
 **Examples of auto-routed swaps:**
 
@@ -57,32 +61,63 @@ mantle-cli swap build-swap --provider fluxion --in WMNT --out ELSA --amount 0.5 
 - recipient address
 - slippage cap (default 0.5%)
 
-## Step 2: Select candidate protocol
+## Step 2: Get a swap quote (REQUIRED)
 
-- Start with curated defaults: `Merchant Moe`, `Agni`, `Fluxion`.
-- Use `mantle-cli swap pairs --json` to check available pairs and pool parameters per DEX.
-- Resolve the execution-ready router/quoter from `mantle-address-registry-navigator`.
-- If the user names another venue, verify its contracts before comparing it.
+```bash
+mantle-cli defi swap-quote --in <token_in> --out <token_out> \
+  --amount <amount> --provider best --json
+```
+
+This returns:
+- `provider`: the DEX with the best output for this pair
+- `minimum_out_raw`: use as `--amount-out-min` in the build step
+- `router_address`: use as `--spender` in the approval step
+- `resolved_pool_params`: the actual `fee_tier` / `bin_step` / `pool_address` used
+- `source_trace`: shows whether the quote came from `onchain:*` (primary) or `dexscreener:*` (fallback)
+
+**CRITICAL:** Always get a quote before building. The quote provides the slippage protection value (`minimum_out_raw`) that prevents sandwich attacks. The `provider` field tells you which DEX to use for the build step.
+
+**Quote uses on-chain quoter contracts** (Agni QuoterV2, Moe LB Quoter) as the primary source — the same data source that `build-swap` uses for pool discovery. This ensures quote and build select the same pool.
+
+### Native MNT swaps
+
+If the input is native MNT (not WMNT), wrap it first:
+```bash
+mantle-cli swap wrap-mnt --amount <n> --json
+# Sign and broadcast the wrap tx
+# Then use WMNT as token_in for both quote and swap
+```
+
+## Step 3: Select candidate protocol
+
+- Use the `provider` from the quote response as your primary choice.
 - For xStocks RWA tokens (wTSLAx, wAAPLx, wNVDAx, etc.) → use **Fluxion** (only DEX with these pools).
 - For BSB, ELSA, VOOI → use **Fluxion** (paired with USDT0).
+- If the user names another venue, verify its contracts before comparing it.
 
 ## Step 3: Token metadata
 
 - For tokens in the registry, use their symbol directly.
 - For unknown tokens, pass the contract address — the CLI resolves decimals on-chain.
 
-## Step 4: Build the swap
+## Step 5: Build the swap
 
 ```bash
-mantle-cli swap build-swap --provider <dex> --in <token> --out <token> \
-  --amount <amount> --recipient <wallet> --json
+mantle-cli swap build-swap --provider <provider_from_quote> \
+  --in <token> --out <token> --amount <amount> \
+  --recipient <wallet> \
+  --amount-out-min <minimum_out_raw_from_quote> \
+  --quote-provider <provider_from_quote> \
+  --quote-fee-tier <fee_tier_from_resolved_pool_params> \
+  --json
 ```
 
-- The CLI auto-resolves pool parameters (fee_tier, bin_step) from the pair registry.
-- The CLI auto-discovers multi-hop routes when no direct pair exists.
-- Just specify `--in`, `--out`, `--amount`, and `--provider` — the CLI does the rest.
+- Pass `--amount-out-min` from the quote's `minimum_out_raw` for slippage protection.
+- Pass `--quote-provider` and `--quote-fee-tier` from the quote's `resolved_pool_params` — the build will emit a warning if it resolves a different pool.
+- The CLI auto-discovers the best pool on-chain (fee_tier, bin_step) and auto-routes multi-hop paths via the LB Quoter.
+- Check the response's `pool_params` to verify it matches the quote's `resolved_pool_params`.
 
-## Step 5: Allowance check and approve
+## Step 6: Allowance check and approve
 
 - The swap router address is in the `unsigned_tx.to` field of the build-swap response.
 - Check if the input token is approved for that router.
@@ -91,13 +126,13 @@ mantle-cli swap build-swap --provider <dex> --in <token> --out <token> \
   mantle-cli swap approve --token <token> --spender <router_from_tx_to> --amount <exact_or_max> --owner <wallet> --json
   ```
 
-## Step 6: Sign and broadcast
+## Step 7: Sign and broadcast
 
 - Pass the `unsigned_tx` object directly to the external signer.
 - **Do NOT add a `from` field.**
 - **Do NOT modify any fields.**
 
-## Step 7: Post-execution verification
+## Step 8: Post-execution verification
 
 - Re-read balances to confirm the swap completed.
 - Compare observed output versus expected.
