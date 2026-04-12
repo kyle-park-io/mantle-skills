@@ -1,6 +1,7 @@
 ---
 name: mantle-network-primer
-description: Use when users need Mantle fundamentals, developer onboarding context, or clarification of MNT gas, chain setup, inclusion, settlement, and finality.
+version: 0.1.7
+description: "Use when users need Mantle fundamentals, developer onboarding context, or clarification of MNT gas, chain setup, inclusion, settlement, and finality."
 ---
 
 # Mantle Network Primer

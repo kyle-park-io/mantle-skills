@@ -1,6 +1,7 @@
 ---
 name: mantle-address-registry-navigator
-description: Use when a Mantle task needs a verified contract or token address, whitelist validation, anti-phishing checks, or safe registry-backed lookup before onchain interaction.
+version: 0.1.7
+description: "Use when a Mantle task needs a verified contract or token address, whitelist validation, anti-phishing checks, or safe registry-backed lookup before onchain interaction."
 ---
 
 # Mantle Address Registry Navigator

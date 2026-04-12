@@ -1,6 +1,7 @@
 ---
 name: mantle-smart-contract-developer
-description: Use when a Mantle project needs contract requirements, architecture, access control, upgradeability, dependencies, or deployment-readiness decisions before authoring or deployment.
+version: 0.1.7
+description: "Use when a Mantle project needs contract requirements, architecture, access control, upgradeability, dependencies, or deployment-readiness decisions before authoring or deployment."
 ---
 
 # Mantle Smart Contract Developer

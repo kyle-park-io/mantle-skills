@@ -1,6 +1,7 @@
 ---
 name: mantle-readonly-debugger
-description: Use when Mantle read-path requests fail, quotes revert, balances disagree, or RPC behavior is inconsistent and needs structured root-cause triage.
+version: 0.1.7
+description: "Use when Mantle read-path requests fail, quotes revert, balances disagree, or RPC behavior is inconsistent and needs structured root-cause triage."
 ---
 
 # Mantle Readonly Debugger

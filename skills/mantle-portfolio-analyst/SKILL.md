@@ -1,6 +1,7 @@
 ---
 name: mantle-portfolio-analyst
-description: Use when a Mantle task needs wallet balances, token holdings, DeFi positions (Aave, LP), allowance exposure, or unlimited-approval review before a DeFi or security decision.
+version: 0.1.7
+description: "Use when a Mantle task needs wallet balances, token holdings, DeFi positions (Aave, LP), allowance exposure, or unlimited-approval review before a DeFi or security decision."
 ---
 
 # Mantle Portfolio Analyst

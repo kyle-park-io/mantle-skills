@@ -1,6 +1,7 @@
 ---
 name: mantle-data-indexer
-description: Use when a Mantle task needs historical wallet activity, time-windowed metrics, event backfills, or protocol analytics that raw RPC cannot answer efficiently.
+version: 0.1.7
+description: "Use when a Mantle task needs historical wallet activity, time-windowed metrics, event backfills, or protocol analytics that raw RPC cannot answer efficiently."
 ---
 
 # Mantle Data Indexer

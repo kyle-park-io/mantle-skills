@@ -1,6 +1,7 @@
 ---
 name: mantle-defi-operator
-description: Use when a Mantle DeFi task needs discovery, venue comparison, or execution-ready planning with verified contracts, preflight evidence, and an external handoff.
+version: 0.1.7
+description: "Use when a Mantle DeFi task needs discovery, venue comparison, or execution-ready planning with verified contracts, preflight evidence, and an external handoff."
 ---
 
 # Mantle Defi Operator
