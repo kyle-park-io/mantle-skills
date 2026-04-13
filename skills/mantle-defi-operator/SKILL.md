@@ -1,6 +1,6 @@
 ---
 name: mantle-defi-operator
-version: 0.1.8.1
+version: 0.1.9
 description: "Use when a Mantle DeFi task needs discovery, venue comparison, or execution-ready planning with verified contracts, preflight evidence, and an external handoff."
 ---
 
@@ -38,6 +38,10 @@ Each entry includes:
 ### Available CLI commands for DeFi operations:
 
 ```bash
+# Token transfers
+mantle-cli transfer send-native --to <addr> --amount <n> --json
+mantle-cli transfer send-token --token <token> --to <addr> --amount <n> --json
+
 # Swap operations
 mantle-cli swap build-swap --provider <dex> --in <token> --out <token> --amount <n> --recipient <addr> --json
 mantle-cli swap approve --token <token> --spender <router> --amount <n> --json
@@ -137,6 +141,7 @@ All `--json` outputs contain `unsigned_tx` with `to`, `data`, `value`, `chainId`
 ## Guardrails
 
 - **CLI-FIRST RULE**: ALWAYS use `mantle-cli` commands with `--json` to build unsigned transactions. NEVER manually construct calldata, hex-encode function calls, or extract addresses from text to build transactions yourself. The CLI handles ABI encoding, address validation, pool parameter resolution, and whitelist checks.
+- **NO MANUAL HEX/WEI CONSTRUCTION**: NEVER manually compute wei values, hex-encode transfer amounts, or use Python/JS to calculate `amount * 10**decimals`. This is the #1 source of value-loss bugs — manual hex computation produces wrong amounts (e.g. sending 56 MNT instead of 15 MNT). ALWAYS use `mantle-cli transfer send-native` for MNT transfers and `mantle-cli transfer send-token` for ERC-20 transfers. The CLI uses `parseUnits()` for deterministic decimal-to-wei conversion.
 - **NO `from` FIELD**: NEVER add a `from` field to `unsigned_tx` objects. The signer determines `from` from the signing key. Adding `from` breaks Privy and other embedded wallet signers.
 - **NO MANUAL ROUTING**: NEVER manually discover intermediate pools, split multi-hop swaps into separate transactions, or use external aggregators/routing services. The CLI auto-discovers 2-hop routes via bridge tokens (WMNT, USDC, USDT0, USDT, USDe, WETH) when no direct pair exists. Just pass `--in` and `--out` — the CLI handles the routing.
 - **USDT vs USDT0**: Mantle has two official USDT variants — USDT (bridged Tether, `0x201E...`) and USDT0 (LayerZero OFT, `0x779D...`). Both have deep DEX liquidity. **Only USDT0 works on Aave V3.** If a user holds USDT and wants to use Aave, guide them to swap USDT → USDT0 first via Merchant Moe (USDT/USDT0 pool, bin_step=1).

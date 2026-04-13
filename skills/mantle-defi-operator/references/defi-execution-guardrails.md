@@ -18,6 +18,17 @@ Apply these controls before any potential state-changing DeFi action.
 - This skill must stop at analysis + plan generation.
 - Never fabricate tx hashes, receipts, or settlement outcomes.
 
+## No manual value construction
+
+**CRITICAL**: NEVER manually compute wei values, hex-encode amounts, or use scripts/Python/JS to calculate `amount * 10**decimals` for any transaction field. This is the single most dangerous category of bugs — manual hex arithmetic silently produces wrong amounts (real-world incident: 15 MNT intended → 56.28 MNT sent due to incorrect hex encoding).
+
+Always use the CLI's deterministic `parseUnits()` conversion:
+- **Native MNT transfers**: `mantle-cli transfer send-native --to <addr> --amount <n> --json`
+- **ERC-20 token transfers**: `mantle-cli transfer send-token --token <token> --to <addr> --amount <n> --json`
+- **All other DeFi operations**: Use the corresponding `mantle-cli` command (swap, aave, lp, etc.)
+
+If no CLI command exists for a particular operation, **do not construct the transaction manually**. Instead, flag it as `blocked` and request the CLI be extended.
+
 ## Coordination boundary
 
 - Use this skill to assemble a final plan, not to replace specialized address, risk, or portfolio skills.
@@ -56,3 +67,14 @@ Apply these controls before any potential state-changing DeFi action.
 - Use deterministic route and calldata inputs from selected quote/liquidity context.
 - Record required call sequence and parameter values for the external executor.
 - Define post-execution reconciliation checks (balances/allowances/slippage) to run after user-confirmed execution.
+
+## CLI coverage boundary
+
+The `mantle-cli` only covers a defined set of verified-safe operations (transfers, swaps on whitelisted DEXes, Aave V3, V3/LB LP). If the requested operation has no corresponding CLI command:
+
+1. **Do not silently construct the transaction manually.** Always inform the user first.
+2. **Explain the risk**: manual construction bypasses decimal conversion verification, address whitelisting, pool parameter resolution, and ABI encoding validation — any error can cause irreversible fund loss.
+3. **Suggest safer alternatives** within the CLI's coverage if possible.
+4. **Require explicit user confirmation** before proceeding with any manual construction.
+5. **Mark the plan as `unverified`** if the user confirms and you proceed manually.
+6. **When in doubt, mark the plan as `blocked`** rather than risk user funds.

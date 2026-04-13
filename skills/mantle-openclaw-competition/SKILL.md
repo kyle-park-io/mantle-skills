@@ -1,6 +1,6 @@
 ---
 name: mantle-openclaw-competition
-version: 0.1.8.1
+version: 0.1.9
 description: "Use when OpenClaw needs to execute DeFi operations for the asset accumulation competition on Mantle. Covers swap, LP, and Aave lending workflows with whitelisted assets and protocols."
 ---
 
@@ -147,6 +147,22 @@ Only these assets count toward the competition score:
 
 ## DeFi Operations — Step-by-Step
 
+### How to Transfer Tokens
+
+**Native MNT transfer:**
+```
+mantle-cli transfer send-native --to <recipient> --amount <n> --json
+→ Sign and broadcast
+```
+
+**ERC-20 token transfer (USDC, WMNT, USDT, etc.):**
+```
+mantle-cli transfer send-token --token <symbol> --to <recipient> --amount <n> --json
+→ Sign and broadcast
+```
+
+> **IMPORTANT:** NEVER manually compute wei values or hex-encode amounts for transfers. Always use the CLI transfer commands above — they handle decimal conversion deterministically.
+
 ### How to Swap Tokens
 
 **Pre-condition:** You have the input token in your wallet.
@@ -277,12 +293,66 @@ Before adding liquidity, analyze the pool to choose the best range and estimate 
 
 1. **CLI only — never use MCP** — All operations via `mantle-cli ... --json`. Do not enable or connect to the MCP server.
 2. **Never fabricate calldata** — Always use `mantle-cli` build commands. Never construct tx data manually.
-3. **Always check allowance before approve** — Don't approve if already sufficient.
-4. **Always get a quote before swap** — Use `mantle-cli defi swap-quote` to know expected output.
-5. **Wait for tx confirmation** — Do not build the next tx until the previous one is confirmed on-chain.
-6. **Show `human_summary`** — Present every build command's summary to the user before signing.
-7. **Value field is hex** — The `unsigned_tx.value` is hex-encoded (e.g., "0x0"). Pass it directly to the signer.
-8. **MNT is gas** — All gas costs are in MNT, not ETH.
+3. **Never manually compute hex/wei values** — NEVER use Python, JS, or mental arithmetic to calculate `amount * 10**decimals` or hex-encode transfer amounts. This has caused real fund-loss incidents (e.g. sending 56 MNT instead of 15 MNT due to hex encoding error). Always use `mantle-cli transfer send-native` for MNT transfers and `mantle-cli transfer send-token` for ERC-20 transfers.
+4. **Always check allowance before approve** — Don't approve if already sufficient.
+5. **Always get a quote before swap** — Use `mantle-cli defi swap-quote` to know expected output and get `minimum_out_raw` for slippage protection.
+6. **Never set allow_zero_min in production** — Always pass `amount_out_min` from the swap quote. Swaps without slippage protection are vulnerable to sandwich attacks and MEV extraction.
+7. **Wait for tx confirmation** — Do not build the next tx until the previous one is confirmed on-chain.
+8. **Show `human_summary`** — Present every build command's summary to the user before signing.
+9. **Value field is hex** — The `unsigned_tx.value` is hex-encoded (e.g., "0x0"). Pass it directly to the signer.
+10. **MNT is gas, not ERC-20** — MNT is the native gas token. To swap MNT, wrap it to WMNT first (`mantle-cli swap wrap-mnt`). To transfer MNT, use `mantle-cli transfer send-native`. Do NOT pass "MNT" to swap/approve/LP commands — those require WMNT.
+11. **Fallback-warning for unsupported operations** — If a user requests an operation that has no corresponding `mantle-cli` command (e.g. interacting with an unsupported protocol, deploying a contract, or calling an arbitrary function), you MUST:
+    - **Warn the user explicitly** that this operation is not supported by the standard CLI tooling
+    - **Explain the fund-safety risk**: manually constructed transactions bypass validation, whitelist checks, and decimal-handling safeguards — incorrect encoding can cause irreversible loss of funds
+    - **Suggest safer alternatives** if any exist (e.g. use a whitelisted protocol instead)
+    - **Require explicit user confirmation** before proceeding with any manual construction
+    - If the user confirms, clearly mark the operation as **"UNVERIFIED — manual construction"** in the output
+12. **xStocks tokens are Fluxion-only** — All xStocks RWA tokens (wTSLAx, wAAPLx, wCRCLx, wSPYx, wHOODx, wMSTRx, wNVDAx, wGOOGLx, wMETAx, wQQQx) only have liquidity on Fluxion with USDC pairs (fee_tier=3000). Do NOT attempt to swap xStocks on Agni or Merchant Moe — no pool exists and the transaction will fail.
+13. **Verify transactions after broadcast** — After the user signs and broadcasts a transaction, always verify the result using `mantle-cli chain tx --hash <tx_hash> --json`. Check `status` is `"success"`. NEVER manually call `eth_getTransactionReceipt` or parse raw RPC JSON — use the CLI which handles value decoding correctly.
+14. **Estimate gas before signing** — For large or complex operations, use `mantle-cli chain estimate-gas --to <addr> --data <hex> --value <hex> --json` to show the user the expected fee in MNT before signing.
+15. **Transaction history** — The CLI cannot query full transaction history. If a user asks about past transactions, direct them to the Mantle Explorer: `https://mantlescan.xyz/address/<wallet_address>`. For verifying a single known transaction, use `mantle-cli chain tx --hash <hash>`.
+
+## Multi-Step Operation Ordering
+
+Many DeFi operations require multiple transactions in strict order. **NEVER skip steps or execute out of order** — this causes on-chain reverts and wastes gas.
+
+### Swap (MNT → Token)
+```
+1. mantle-cli swap wrap-mnt --amount <n>           → sign & WAIT for confirmation
+2. mantle-cli defi swap-quote --in WMNT --out X    → get minimum_out_raw
+3. mantle-cli account allowances <wallet> --pairs WMNT:<router>  → check allowance
+4. IF insufficient: mantle-cli swap approve ...    → sign & WAIT for confirmation
+5. mantle-cli swap build-swap ...                  → sign & WAIT for confirmation
+```
+
+### Swap (Token → Token)
+```
+1. mantle-cli defi swap-quote --in X --out Y       → get minimum_out_raw
+2. mantle-cli account allowances <wallet> --pairs X:<router>
+3. IF insufficient: mantle-cli swap approve ...    → sign & WAIT for confirmation
+4. mantle-cli swap build-swap ...                  → sign & WAIT for confirmation
+```
+
+### Aave Supply → Borrow
+```
+1. mantle-cli swap approve --token X --spender 0x458F... --amount <n>  → sign & WAIT
+2. mantle-cli aave supply --asset X --amount <n> --on-behalf-of <wallet>  → sign & WAIT
+3. mantle-cli aave positions --user <wallet>       → verify collateral_enabled
+4. IF collateral_enabled=NO: mantle-cli aave set-collateral --asset X --user <wallet>  → sign & WAIT
+5. mantle-cli aave borrow --asset Y --amount <n> --on-behalf-of <wallet>  → sign & WAIT
+```
+
+### Add Liquidity (V3)
+```
+1. mantle-cli lp find-pools --token-a A --token-b B   → discover pools
+2. mantle-cli defi analyze-pool ...                    → check APR, risk
+3. mantle-cli lp suggest-ticks ...                     → get tick range recommendations
+4. mantle-cli swap approve --token A --spender <pm>    → sign & WAIT
+5. mantle-cli swap approve --token B --spender <pm>    → sign & WAIT
+6. mantle-cli lp add ...                               → sign & WAIT
+```
+
+> **CRITICAL**: "sign & WAIT" means you must wait for on-chain confirmation (use `mantle-cli chain tx --hash <hash>` to verify `status: success`) before proceeding to the next step. Do NOT pipeline multiple unsigned transactions.
 
 ## Competition Scoring
 
@@ -294,3 +364,35 @@ Net Value (USD) = Sum(token holdings * price) + Sum(aToken balances * price) - S
 - debtToken balances grow over time (interest owed)
 - LP positions valued by underlying token amounts
 - Only interactions with whitelisted contracts count
+
+## ⚠️ CLI Coverage Boundary — MUST READ
+
+The `mantle-cli` covers the following **verified-safe** operations:
+
+| Category | Supported Operations |
+|----------|---------------------|
+| **Transfers** | Native MNT transfer, ERC-20 token transfer |
+| **Swaps** | Agni, Fluxion, Merchant Moe (direct + multi-hop) |
+| **LP** | V3 add/remove/collect-fees (Agni, Fluxion), LB add/remove (Merchant Moe) |
+| **Lending** | Aave V3 supply, borrow, repay, withdraw, set-collateral |
+| **Utility** | Wrap/unwrap MNT, ERC-20 approve, tx receipt, gas estimation |
+| **Read-only** | Balances, quotes, pool state, positions, prices, chain status |
+
+**Any operation NOT listed above has NO CLI support.** This includes but is not limited to:
+- Interacting with non-whitelisted protocols or contracts
+- Calling arbitrary smart contract functions
+- Token approvals to non-whitelisted spenders
+- Bridge operations
+- NFT operations
+- Governance/voting operations
+
+### When a User Requests an Unsupported Operation
+
+You MUST follow this exact protocol:
+
+1. **Immediately inform the user**: "⚠️ This operation is not covered by the verified CLI tooling."
+2. **Explain the risk clearly**: "All subsequent operations for this request will be constructed manually. Manual transaction construction bypasses the CLI's safety guarantees — including decimal/hex conversion verification, address whitelist checks, and parameter validation. **Incorrect construction can result in irreversible loss of funds.**"
+3. **Suggest alternatives**: If a supported operation can achieve the same goal, recommend it.
+4. **Require explicit confirmation**: Do NOT proceed unless the user explicitly says they understand the risk and want to continue.
+5. **If the user confirms**: Prefix every manually constructed transaction with `⚠️ UNVERIFIED MANUAL CONSTRUCTION` and remind the user to **double-check all values** (especially amounts and addresses) before signing.
+6. **If in doubt, refuse**: It is always safer to decline an unsupported operation than to risk user funds.
