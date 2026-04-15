@@ -179,12 +179,32 @@ mantle-cli lp remove --provider agni \
 The `--percentage` mode reads the position's current liquidity on-chain and calculates the exact amount to remove. No need to manually query `lp positions` for the raw liquidity number.
 
 ### Merchant Moe
+
+#### Percentage mode (RECOMMENDED)
 ```bash
+# Remove all LP — auto-detects bins with liquidity and removes 100%
+mantle-cli lp remove --provider merchant_moe \
+  --token-a USDC --token-b USDT0 \
+  --bin-step 1 --percentage 100 \
+  --recipient 0x... --json
+
+# Remove 50% of LP
+mantle-cli lp remove --provider merchant_moe \
+  --token-a WMNT --token-b USDT \
+  --bin-step 25 --percentage 50 \
+  --recipient 0x... --json
+```
+
+#### Explicit mode (advanced — use balance_raw from getLBPositions)
+```bash
+# IMPORTANT: --amounts must be balance_raw values (ERC-1155 LP token balances),
+# NOT user_amount_x_raw or user_amount_y_raw (those are underlying token estimates).
+# LP balances are typically 1e18-scale numbers like "500000000000000000".
 mantle-cli lp remove --provider merchant_moe \
   --token-a USDC --token-b USDT0 \
   --bin-step 1 \
   --ids '[8388608,8388609,8388610]' \
-  --amounts '[1000000,1000000,1000000]' \
+  --amounts '["500000000000000000","250000000000000000","750000000000000000"]' \
   --recipient 0x... --json
 ```
 
