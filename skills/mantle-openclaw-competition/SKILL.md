@@ -1,6 +1,6 @@
 ---
 name: mantle-openclaw-competition
-version: 0.4.0
+version: 0.1.11
 description: "Use when OpenClaw needs to execute DeFi operations for the asset accumulation competition on Mantle. Covers swap, LP, and Aave lending workflows on whitelisted Mantle protocols via mantle-cli."
 ---
 
