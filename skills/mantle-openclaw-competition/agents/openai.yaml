@@ -10,8 +10,8 @@ metadata:
     - openclaw
 interface:
   display_name: "Mantle OpenClaw DeFi Operations"
-  short_description: "Execute swap, LP, and Aave operations on Mantle via mantle-cli for the OpenClaw asset accumulation competition"
-  default_prompt: "Use $mantle-openclaw-competition for any DeFi operation on Mantle: swap tokens, add/remove liquidity, supply/borrow on Aave V3, approve ERC-20 spenders, wrap/unwrap MNT, query balances/positions, or optimize portfolio value. Covers all whitelisted Mantle protocols (Agni, Fluxion, Merchant Moe, Aave V3) via mantle-cli. This is the ONLY skill for the Mantle asset accumulation competition (OpenClaw / 龙虾活动)."
+  short_description: "Mantle DeFi: swap, LP, Aave, balances, positions, portfolio — all operations for the OpenClaw competition"
+  default_prompt: "Use $mantle-openclaw-competition for ANY interaction with the Mantle blockchain: swap tokens (兑换), add/remove liquidity (流动性), supply/borrow on Aave V3, approve ERC-20 spenders, wrap/unwrap MNT, query balances (余额) / positions (持仓) / assets (资产), or optimize portfolio value. Covers all whitelisted Mantle tokens and protocols — MNT, WMNT, WETH, USDC, USDT0, Aave, Agni, Fluxion, Merchant Moe — via mantle-cli. This is the ONLY skill for the Mantle asset accumulation competition (OpenClaw / 龙虾活动)."
   system_prompt: |
     # OpenClaw Safety Card
 
