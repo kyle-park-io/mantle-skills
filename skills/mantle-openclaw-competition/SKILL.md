@@ -188,31 +188,47 @@ Silently omitting any whitelisted asset (e.g., MOE) from a balance report is a h
 
 ### Rule W-8: Signing Flow Integrity 🔐
 
-**Canonical path:** `mantle-cli` build → complete `unsigned_tx` → Privy API sign → wait for on-chain receipt. No shortcuts, no alternatives.
+**Canonical path:** `mantle-cli` build → pass `signable_tx` **verbatim** to Privy API (`sign evm-transaction --transaction`) → broadcast → wait for on-chain receipt. No shortcuts, no alternatives.
 
-**`unsigned_tx` MUST carry the full parameter set returned by `mantle-cli`:**
+**Two views, one transaction.** Every `mantle-cli` build command returns both:
 
 ```ts
-unsigned_tx: {
-  to: string;                     // required
-  data: string;                   // required
-  value: string;                  // required
-  chainId: number;                // required
-  gas?: string;                   // suggested gas limit
-  maxFeePerGas?: string;          // EIP-1559: baseFee × 2 + tip, hex wei
-  maxPriorityFeePerGas?: string;  // EIP-1559 tip, hex wei
-  nonce?: number;                 // only when explicitly overridden (e.g. after mantle_getNonce)
+unsigned_tx: {                    // Signer-agnostic view. Use for logging / diffing / non-Privy signers (viem, ethers).
+  to: string;
+  data: string;
+  value: string;                  // hex ("0x0")
+  chainId: number;                // INTEGER (e.g. 5000)
+  gas?: string;
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
+  nonce?: number;                 // INTEGER
+  // no `from` field
+};
+
+signable_tx: {                    // Privy-ready view. This is what Privy's `--transaction` parameter consumes.
+  from: string;                   // sender wallet address — already filled in
+  to: string;
+  data: string;
+  value: string;                  // hex
+  chainId: string;                // HEX STRING (e.g. "0x1388")
+  gas?: string;
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
+  nonce?: string;                 // HEX STRING (e.g. "0xc6")
 };
 ```
 
-- **Never mutate, strip, or re-encode** any field returned by `mantle-cli`. Pass `unsigned_tx` to Privy **verbatim**.
-- **Never hand-assemble `unsigned_tx`** from your own values — the CLI is the sole producer. Fabricating `to` / `data` / `value` / gas params is the same violation as Hard Constraint #4 (no fabricated calldata).
+- **Privy signing MUST consume `signable_tx`.** Extract it with `jq -c .signable_tx <file>` and pass it verbatim as `--transaction`. Never hand-convert `unsigned_tx` (chainId/nonce int→hex, appending `from`, etc.) — that conversion is precisely the error class `signable_tx` was added to eliminate.
+- **Never mutate, strip, or re-encode** any field in `signable_tx`. No wrapping in `{"params":[…]}`. No casing changes. No field omission. Byte-for-byte what the CLI emitted.
+- **Never hand-assemble either object** from your own values — the CLI is the sole producer. Fabricating `to` / `data` / `value` / gas params is the same violation as Hard Constraint #4 (no fabricated calldata).
+- **If the CLI output lacks a `signable_tx` field** (older binary, malformed response), **STOP**. Do NOT fall back to manually transforming `unsigned_tx` — upgrade the CLI and rebuild. Silent manual conversion is what caused the ~10-round sign retries in past runs.
 
-**One unsigned_tx = one signature. No exceptions.**
+**One `signable_tx` = one signature. No exceptions.**
 
 - After signing, WAIT for the receipt (`mantle-cli chain tx --hash <hash> --json`) before any further action.
-- **On 504 / timeout / network error:** do NOT re-sign. First query the chain for the receipt — if the tx is already mined (any status), resume from there; only if it is truly absent from the chain may you rebuild via `mantle-cli` (new `idempotency_key`) and sign the **new** `unsigned_tx`. Re-signing the old `unsigned_tx` risks duplicate broadcast and nonce collision.
-- **If Privy timed out before returning a tx hash** (signing-stage failure, no broadcast): there is nothing to query on-chain. Rebuild via `mantle-cli` with a new `idempotency_key` and sign the fresh `unsigned_tx`. Discard the old one.
+- **On 504 / timeout / network error:** do NOT re-sign. First query the chain for the receipt — if the tx is already mined (any status), resume from there; only if it is truly absent from the chain may you rebuild via `mantle-cli` (new `idempotency_key`) and sign the **new** `signable_tx`. Re-signing the old one risks duplicate broadcast and nonce collision.
+- **If Privy timed out before returning a tx hash** (signing-stage failure, no broadcast): there is nothing to query on-chain. Rebuild via `mantle-cli` with a new `idempotency_key` and sign the fresh `signable_tx`. Discard the old one.
+- **If Privy rejects the request with a format error** (e.g. "chainId must start with 0x", "value must be hex"): do NOT start hand-patching fields. Assume the `signable_tx` extraction was wrong (e.g. double-serialization, accidental wrapping). Re-extract from the build output file with `jq -c .signable_tx` and retry exactly once. Two consecutive rejections → STOP and surface the raw error.
 
 ### Rule W-9: Pre-Execution Readiness Check (MANDATORY)
 
