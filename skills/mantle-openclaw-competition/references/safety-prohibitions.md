@@ -31,7 +31,7 @@ If a user request cannot be fully expressed using the standard execute verbs (`s
 - **STOP — do not improvise.**
 - **Tell the user**: "This operation is outside the standard CLI capability set. To avoid fund risk, I cannot proceed automatically."
 - **Suggest a supported alternative** if one exists (e.g. "you wanted to bridge — that's not supported, but you can swap via Merchant Moe").
-- **NEVER attempt the operation by any other means.** No Python. No JavaScript. No direct RPC calls. No `utils` calldata construction. No "manual" unsigned_tx assembly.
+- **NEVER attempt the operation by any other means.** No Python. No JavaScript. No direct RPC calls. No `utils` calldata construction. No "manual" `unsigned_tx` / `signable_tx` assembly.
 - **If the user insists**, recommend they **restart the OpenClaw agent with updated tooling** (i.e. wait for the next `mantle-cli` release that adds the capability) rather than improvising in-session.
 
 > **Token transfers (native MNT and ERC-20) fall under this STOP condition.** `mantle-cli transfer send-native` / `transfer send-token` and the corresponding `mantle_buildTransferNative` / `mantle_buildTransferToken` MCP tools have been deliberately removed from the toolset. If a user asks to move tokens between wallets, refuse per this protocol.
@@ -46,7 +46,8 @@ You MUST NEVER, under ANY circumstances, do ANY of the following:
 
 - Compute calldata, function selectors, or ABI-encoded parameters yourself (via Python, JS, manual hex, or any other method)
 - Manually hex-encode token amounts or wei values
-- Construct `unsigned_tx` objects by hand instead of using `mantle-cli`
+- Construct `unsigned_tx` or `signable_tx` objects by hand instead of using `mantle-cli` (both are CLI-produced views of the same build)
+- Hand-convert `unsigned_tx` fields into `signable_tx` shape (chainId/nonce int→hex, appending `from`) — always use the `signable_tx` object the CLI already emitted
 - Use Python/JS scripts to build or encode transaction data
 - Call `sign evm-transaction`, `eth_sendRawTransaction`, or any direct broadcast tool with manually constructed data
 - Use `mantle-cli utils parse-units / encode-call / build-tx` as an "escape hatch" to construct transactions for unsupported operations
@@ -109,7 +110,7 @@ If the operation isn't on this list, refer to **STOP CONDITION 2** above.
 
 10. **Show `human_summary`** — Present every build command's summary to the user before signing.
 
-11. **Value field is hex** — The `unsigned_tx.value` is hex-encoded (e.g., `"0x0"`). Pass it directly to the signer.
+11. **Sign from `signable_tx`, not `unsigned_tx`** — Every CLI build returns TWO objects: `unsigned_tx` (chainId/nonce as integers, no `from` — for logs / non-Privy signers) and `signable_tx` (chainId/nonce/value as hex strings, `from` pre-filled — for Privy). Privy's `--transaction` parameter MUST receive `signable_tx` verbatim (`jq -c .signable_tx <file>`). NEVER hand-convert `unsigned_tx` fields (int→hex, appending `from`, etc.) — that manual conversion was the root cause of past ~10-round sign retries and violates the "no field mutation" rule. If `signable_tx` is absent from the build output, STOP and upgrade the CLI — do not improvise.
 
 12. **MNT is gas, not ERC-20** — MNT is the native gas token. To swap MNT, wrap it to WMNT first (`mantle-cli swap wrap-mnt`). Do NOT pass `"MNT"` to swap/approve/LP commands — those require WMNT. Moving MNT (or any ERC-20) between wallets is NOT a supported operation (see STOP CONDITION 2).
 

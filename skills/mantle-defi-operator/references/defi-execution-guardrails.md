@@ -23,7 +23,8 @@ Apply these controls before any potential state-changing DeFi action.
 **NEVER**, under any circumstances:
 - Compute calldata, function selectors, or ABI-encoded parameters (via Python `encode_abi`, JS `encodeFunctionData`, manual `0xa9059cbb` selectors, or ANY other method)
 - Manually hex-encode token amounts or wei values
-- Construct `unsigned_tx` JSON objects by hand
+- Construct `unsigned_tx` or `signable_tx` JSON objects by hand (both are CLI-produced; never hand-assemble either)
+- Hand-convert `unsigned_tx` into `signable_tx` shape (int→hex, appending `from`) — use the CLI-emitted `signable_tx` directly
 - Use Python/JS scripts to build transaction data
 - Call `sign evm-transaction` or `eth_sendRawTransaction` with hand-crafted data
 - Reason that "the CLI doesn't support this" to justify manual construction — check the catalog first
@@ -94,7 +95,7 @@ The `build-tx` output includes `⚠ UNVERIFIED MANUAL CONSTRUCTION` warning. Mar
 
 ## Transaction deduplication (CRITICAL)
 
-Every build-tool response includes an `idempotency_key` — a deterministic keccak256 hash scoped to the signing wallet. The key includes `sender` (wallet address), `request_id` (caller-provided intent ID), and `unsigned_tx` fields (to, data, value, chainId).
+Every build-tool response includes an `idempotency_key` — a deterministic keccak256 hash scoped to the signing wallet. The key includes `sender` (wallet address), `request_id` (caller-provided intent ID), and the canonical transaction fields (to, data, value, chainId — same across both the `unsigned_tx` and `signable_tx` views).
 
 **Scoping rules:**
 - **Same wallet, same calldata** → same key → deduplicated ✓
@@ -125,7 +126,7 @@ The `mantle-cli` covers verified-safe operations (swaps on whitelisted DEXes, Aa
 1. **Do NOT use Python/JS/manual hex.** Use the CLI utils pipeline instead:
    - `mantle-cli utils parse-units` — convert decimal amounts to raw integers
    - `mantle-cli utils encode-call` — ABI-encode the function call
-   - `mantle-cli utils build-tx` — wrap calldata into a validated unsigned_tx
+   - `mantle-cli utils build-tx` — wrap calldata into a validated transaction (emits both `unsigned_tx` and `signable_tx`)
 2. **Warn the user** that the resulting transaction is `UNVERIFIED` — it was not built by a dedicated, protocol-specific CLI command.
-3. **Require explicit user confirmation** before signing the `⚠ UNVERIFIED` unsigned_tx.
+3. **Require explicit user confirmation** before signing the `⚠ UNVERIFIED` transaction (`unsigned_tx` / `signable_tx`).
 4. **When in doubt, mark the plan as `blocked`** rather than risk user funds.

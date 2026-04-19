@@ -16,7 +16,7 @@ mantle-cli lp suggest-ticks --token-a USDC --token-b WMNT --fee-tier 10000 --pro
 mantle-cli lp analyze --token-a USDC --token-b WMNT --fee-tier 10000 --provider agni --investment-usd 1000 --json
 mantle-cli defi lb-state --token-a USDC --token-b USDT0 --bin-step 1 --json
 
-# Write operations (returns unsigned_tx)
+# Write operations (return both unsigned_tx and signable_tx)
 mantle-cli lp add --provider agni --token-a USDC --token-b WMNT --amount-a 10 --amount-b 15 --recipient 0x... --json
 mantle-cli lp add --provider agni --token-a USDC --token-b WMNT --amount-usd 1000 --recipient 0x... --json  # USD mode
 mantle-cli lp remove --provider agni --token-id 12345 --liquidity 1000000 --recipient 0x... --json
@@ -224,6 +224,6 @@ mantle-cli lp remove --provider merchant_moe \
 - **Missing approve**: both tokens must be approved for the router/position manager before adding
 - **Manual amount calculation**: use `--amount-usd` instead of manually computing token splits from prices
 - **Manual liquidity lookup for removal**: use `--percentage` instead of manually reading position liquidity
-- **`from` field**: NEVER add to unsigned_tx
+- **`from` field**: NEVER add to `unsigned_tx`; for Privy use the CLI-emitted `signable_tx` (already has `from`).
 - **V3 position enumeration**: `lp positions` discovers all positions across both Agni and Fluxion
 - **Fee harvesting**: use `lp collect-fees` standalone — no need to remove liquidity to collect fees

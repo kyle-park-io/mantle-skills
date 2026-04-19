@@ -19,7 +19,7 @@ mantle-cli approve --token WMNT --spender <router_address> \
 mantle-cli swap pairs --provider fluxion --json
 ```
 
-The CLI outputs `unsigned_tx` with `to`, `data`, `value`, `chainId` — **no `from` field**. Pass this directly to the signer without modification.
+The CLI outputs both `unsigned_tx` (signer-agnostic, chainId/nonce integers, no `from`) and `signable_tx` (Privy-ready, chainId/nonce/value hex, `from` pre-filled). Pick the one matching your signer — pass it verbatim, never hand-convert between them.
 
 ## Multi-hop Routing (Built-in)
 
@@ -123,7 +123,7 @@ mantle-cli swap build-swap --provider <provider_from_quote> \
 
 ## Step 6: Allowance check and approve
 
-- The swap router address is in the `unsigned_tx.to` field of the build-swap response.
+- The swap router address is in the `unsigned_tx.to` / `signable_tx.to` field of the build-swap response.
 - Check if the input token is approved for that router.
 - If insufficient:
   ```bash
@@ -132,9 +132,11 @@ mantle-cli swap build-swap --provider <provider_from_quote> \
 
 ## Step 7: Sign and broadcast
 
-- Pass the `unsigned_tx` object directly to the external signer.
-- **Do NOT add a `from` field.**
-- **Do NOT modify any fields.**
+- For Privy: extract `signable_tx` with `jq -c .signable_tx <file>` and pass as `--transaction`. Never hand-convert `unsigned_tx`.
+- For viem / ethers / non-Privy signers: pass `unsigned_tx` directly.
+- **Do NOT modify any fields** of whichever object you pick.
+- **Do NOT add a `from` field** to `unsigned_tx` — Privy users should switch to `signable_tx` (which already has `from`) rather than patch `unsigned_tx`.
+- If the required object (`signable_tx` for Privy) is missing from the CLI output, STOP and upgrade the CLI.
 
 ## Step 8: Post-execution verification
 
@@ -143,7 +145,8 @@ mantle-cli swap build-swap --provider <provider_from_quote> \
 
 ## Common pitfalls
 
-- **`from` field**: NEVER add `from` to unsigned_tx — breaks Privy and embedded signers.
+- **`from` field**: NEVER add `from` to `unsigned_tx` — for Privy, use `signable_tx` (already has `from`) instead of patching `unsigned_tx`.
+- **Hand-converting `unsigned_tx` → `signable_tx`**: NEVER do it (chainId/nonce int→hex, appending `from`). The CLI already emits `signable_tx`; use it.
 - **Manual routing**: NEVER manually discover pools or split multi-hop into separate txs — use the CLI's built-in routing.
 - **Wrong pool parameters**: NEVER manually specify `--fee-tier` or `--bin-step` for registered pairs — the CLI resolves them automatically.
 - **Merchant Moe version enum**: the CLI handles this correctly (V1=0, V2.2=3); do NOT override.
