@@ -1,447 +1,414 @@
 ---
 name: mantle-openclaw-competition
-version: 0.1.10
-description: "Use when OpenClaw needs to execute DeFi operations for the asset accumulation competition on Mantle. Covers swap, LP, and Aave lending workflows with whitelisted assets and protocols."
+version: 0.1.18
+description: "Use for ANY on-chain DeFi operation on the Mantle network by OpenClaw in the asset accumulation competition — swapping, liquidity provision, Aave V3 lending, ERC-20 approvals, MNT wrap/unwrap, or portfolio/state reads. TRIGGER when the user: (a) mentions OpenClaw, mantle-cli, or the Mantle asset accumulation competition; (b) asks to swap / trade / exchange tokens on Mantle via Agni, Fluxion, or Merchant Moe; (c) asks to add / remove / manage liquidity (LP) on whitelisted Mantle pools, including xStocks pairs; (d) asks to supply / deposit / lend / borrow / repay / withdraw / set-collateral on Aave V3 on Mantle; (e) asks to wrap MNT → WMNT or unwrap WMNT → MNT; (f) asks to approve an ERC-20 spender; (g) wants to discover whitelisted assets, pools, pairs, routers, fee tiers, or bin steps; (h) wants to query balances, allowances, transaction status, or Aave positions on Mantle; (i) wants to optimize portfolio USD value via yield, leverage, or exit timing. SKIP for: operations on other chains (Ethereum, Base, Arbitrum, BSC), Mantle infra / smart-contract development, or anything outside whitelisted protocols. Enforces hard rules: CLI-only execution via `mantle-cli … --json` (NEVER the mantle-mcp MCP server), STOP-on-error (no auto-retry; recommend restart), quote-before-swap, sign-and-WAIT per tx, and absolute refusal of native/ERC-20 token transfers or fabricated calldata (no Python / JS / raw RPC / utils encoding)."
 ---
 
 # OpenClaw Competition — DeFi Operations Guide
 
 ## Overview
 
-This skill provides everything OpenClaw needs to execute DeFi operations in the Mantle asset accumulation competition. Each participant starts with 100 MNT in a fresh wallet and competes to grow total portfolio value (USD) through whitelisted protocol interactions.
+OpenClaw competes in the Mantle asset accumulation competition: each participant starts with 100 MNT in a fresh wallet and grows total portfolio value (USD) through whitelisted protocol interactions. This skill provides the workflow skeleton; details for each operation live in `references/`.
 
-## Tooling — CLI Only (Mandatory)
-
-**DO NOT enable or connect the `mantle-mcp` MCP server.** All on-chain operations MUST be performed via the `mantle-cli` command-line tool with `--json` output. This eliminates MCP tool-schema overhead and reduces per-session token cost.
-
-### Setup
+## Setup
 
 ```bash
-# Install mantle-cli (CLI only, no MCP server overhead)
+# Install mantle-cli (CLI only — no MCP server)
 npm install @mantleio/mantle-cli
 npx mantle-cli --help   # verify
 ```
 
-Or, if this skills repo has been cloned with its `package.json`:
+If this skills repo has its own `package.json`:
 
 ```bash
 cd <skills-repo-root> && npm install
-npx mantle-cli --help   # verify
+npx mantle-cli --help
 ```
 
-### Key rules
+**Golden rule:** every command MUST end in `--json` so the output is machine-parseable. Never enable or connect the `mantle-mcp` MCP server.
 
-- **Always append `--json`** to every command so the output is machine-parseable JSON.
-- **Never start or connect to the MCP server.** Do not configure `mantle-mcp` in any MCP client settings.
-- **NEVER fabricate calldata or construct transactions manually** — always use `mantle-cli` build commands. This includes Python `encode_abi`, JS `encodeFunctionData`, manual hex `0xa9059cbb` selectors, or any other method. The CLI handles ALL transfers: `transfer send-native` for MNT, `transfer send-token` for ANY ERC-20.
-- **Never add a `from` field** to unsigned transactions — the signer determines `from`.
+### Discover available commands & whitelisted assets/protocols
 
-### Discover available commands
-
-Before using the CLI for the first time, run:
+The `mantle-cli` catalog is the **single source of truth** for capabilities, supported tokens, pools, routers, and pool params. Do NOT rely on hard-coded lists, prior knowledge, or cached assumptions.
 
 ```bash
-mantle-cli catalog list --json          # list all 37 capabilities with category, auth, and CLI command template
-mantle-cli catalog search "swap" --json # find swap-related capabilities
-mantle-cli catalog show <tool-id> --json # full details for a specific capability
+mantle-cli catalog list --json           # list all capabilities
+mantle-cli catalog search "swap" --json  # find capabilities by keyword
+mantle-cli catalog show <tool-id> --json # full details for one capability
+mantle-cli swap pairs --json             # all whitelisted swap pairs + bin_step / fee_tier
+mantle-cli lp find-pools --token-a A --token-b B --json   # discover pools for a pair
 ```
 
-Each catalog entry includes:
-- `category`: `query` (read-only) | `analyze` (computed insights) | `execute` (builds unsigned tx)
-- `auth`: `none` | `optional` | `required` (whether a wallet address is needed)
-- `cli_command`: the exact CLI command template with placeholders
-- `workflow_before`: which tools to call before this one
+Each catalog entry includes `category` (`query` / `analyze` / `execute`), `auth` (`none` / `optional` / `required`), `cli_command` template, and `workflow_before` (which tools to call first).
+
+### Catalog-first constraint (MANDATORY — Hard Constraint #8)
+
+**Before executing ANY operation, you MUST consult the catalog to verify the operation exists and retrieve its exact CLI command template.** This is a non-negotiable hard constraint at the same level as constraints 1–7.
+
+**⛔ ABSOLUTE RULE: No catalog lookup → No execution. No exceptions.**
+
+1. **Every session MUST start with a catalog load.** Run `mantle-cli catalog list --json` at the beginning of the session to load the full capability list. Do NOT proceed with any operation until the catalog response is received and parsed.
+2. **Every operation MUST be verified against the catalog before execution.** Before running any `swap / lp / aave / approve` command:
+   - Run `mantle-cli catalog show <tool-id> --json` to retrieve the exact command template, required parameters, and `workflow_before` dependencies.
+   - If the operation is not in the catalog → **STOP and refuse**. The operation does not exist.
+3. **Unknown token, pool, or pair?** Verify via `mantle-cli swap pairs --json` or `mantle-cli lp find-pools --json`. If not in the response → **STOP and refuse**. It is not whitelisted.
+4. **Never invent CLI subcommands or flags.** If `catalog list` does not show a capability for the user's request, that capability does not exist. Do NOT guess command names, flags, or parameter formats. Do NOT extrapolate from other commands.
+5. **Catalog data expires at session boundary.** Do NOT carry over catalog results from a previous session — always re-fetch.
+
+**Incident reference:** Agent skipped catalog lookup, assumed `mantle-cli transfer send-token` existed, and attempted to construct a transfer command that does not exist in the CLI. Had the agent consulted `catalog list` first, it would have found zero matches and refused.
+
+## Hard Constraints (8 critical rules)
+
+Full rationale, incident reports, and the numbered detail list live in `references/safety-prohibitions.md`. The eight non-negotiables:
+
+1. **CLI only** — never enable `mantle-mcp`; every command ends in `--json`.
+2. **🛑 STOP on ANY `mantle-cli` error** — never auto-retry, never improvise. Print the raw error to the user verbatim, halt the workflow, and **recommend the user restart the OpenClaw agent** before continuing. Continuing past an unhandled error risks duplicate broadcasts, stale allowances, and fund loss.
+3. **🛑 Refuse anything beyond the standard CLI verbs** — execute operations MUST be expressed via `swap / approve / lp / aave`. **Token transfers (native MNT and ERC-20) are NOT supported — refuse.** If a request can't map to one of the allowed verbs, **STOP and tell the user**. NEVER improvise with Python, JS, RPC calls, or `utils` calldata construction. The user accepting risk is NOT sufficient — the prohibition is absolute.
+   - **Protocol actions are function calls, NOT transfers.** `aave supply / borrow / repay / withdraw`, `swap build-swap`, and `lp add / remove` invoke specific functions on the target contract that mint aTokens, route the trade, or register liquidity. Sending tokens directly to the Aave V3 Pool (`0x458F293454fE0d67EC0655f3672301301DD51422`), a DEX router, a position manager, or a WETHGateway via ERC-20 `transfer()` / `transferFrom()` does NOT trigger those functions — the tokens are **permanently locked** with no on-chain path to recover. If a user says "supply / deposit / lend X to Aave" or "send X to Aave", use `mantle-cli aave supply` — never model it as an ERC-20 transfer to the Pool address.
+4. **Never fabricate calldata or compute wei** — the dedicated CLI verbs handle decimal conversion deterministically. NEVER use Python/JS for any encoding.
+5. **Never build the same tx twice** — always pass `--sender <wallet>` so the response carries an `idempotency_key`. If a build times out, check `mantle-cli chain tx --hash <hash> --json` BEFORE rebuilding.
+6. **🛡️ Always quote before swap — `amount-out-min` MUST come from the quote's `minimum_out_raw`, VERBATIM** — see "Slippage Protection Rules" section below for full details. Setting `--amount-out-min` to `0`, `1`, or any value less than `minimum_out_raw` is **absolutely prohibited** — it removes slippage protection and exposes the user to sandwich attacks and fund loss.
+7. **"sign & WAIT"** — verify each tx (`status: success`) before building the next. Do NOT pipeline unsigned transactions.
+8. **🔍 Catalog-first — ALWAYS consult the catalog before ANY operation** — run `mantle-cli catalog list --json` at session start and `mantle-cli catalog show <tool-id> --json` before each operation. No catalog lookup → no execution. See "Catalog-first constraint" section above for full rules.
+
+## ⚠ USDT ≠ USDT0
+
+USDT and USDT0 are **two different ERC-20 tokens** on Mantle (different contract addresses, different protocol support, different liquidity pools). Never confuse them.
+
+- **Aave V3 only accepts USDT0** — NOT USDT. If the user only holds USDT, swap to USDT0 on Merchant Moe (bin_step=1) first.
+- **When the user says "USDT", always clarify** — ask whether they mean USDT or USDT0 before executing any operation. Do not assume.
+- **CLI params must be exact** — `--in USDT` and `--in USDT0` point to different contracts. Using the wrong symbol causes failed txs, wrong pools, or fund loss.
+- **Always display both balances** when the user asks about USDT holdings or portfolio.
+
+## 🔤 Asset Alias Resolution
+
+Generic name → Mantle-whitelisted canonical token. Verify the candidate via `mantle-cli swap pairs --json` (swap/LP) or `aave markets --json` (lending) before use — swap support does NOT imply Aave support. Multiple candidates → **ASK**, never pick silently. Generic balance queries ("how much BTC/ETH?") → list ALL variants.
+
+- **BTC / 比特币** → **FBTC** (only). Refuse WBTC / solvBTC / renBTC.
+- **ETH / 以太坊** → **WETH**, **mETH** (LST), **cmETH** (restaked mETH) — ask which. Refuse stETH / wstETH / rETH.
+- **稳定币 / stablecoin / USD** → **USDC**, **USDT0**, **USDe**, **sUSDe** — ask which + which protocol.
+- **USDT** → clarify USDT vs USDT0 (§USDT ≠ USDT0).
+- **MNT** → native MNT (wrap/unwrap only) or WMNT (swap / LP / Aave).
+
+## 🛡️ Slippage Protection Rules (Hard Constraint #6 — detailed)
+
+**⛔ `--amount-out-min` MUST equal the quote's `minimum_out_raw`, passed VERBATIM. No exceptions.**
+
+- `minimum_out_raw` is a **raw integer** in the output token's smallest unit. The CLI already handles decimal conversion — do NOT multiply, divide, or re-encode it.
+- **Prohibited values:** `0`, `1`, or anything below `minimum_out_raw`. These remove slippage protection and expose the user to sandwich attacks.
+- **If `build-swap` reverts:** re-quote to get a fresh `minimum_out_raw` and retry — NEVER lower `amount-out-min` to "make it work." After 2 failed retries, STOP and inform the user.
+
+> **Incident:** Agent re-multiplied `minimum_out_raw: 9934699` → passed `9934700000` → revert → fell back to `--amount-out-min 1` (zero protection). **Correct fix:** pass `9934699` verbatim.
+
+## Workflow Execution Rules (mandatory)
+
+These rules apply to **every** workflow (Swap, LP, Aave) and **every** reference file. Violations may cause irreversible fund loss.
+
+### Rule W-1: Strict Sequential Step Enforcement
+
+Each workflow defines a numbered step sequence. You MUST execute steps **in exact order** — skipping, reordering, or parallelising steps is **prohibited**.
+
+- **NEVER skip an intermediate step** to jump to a later one. For example, you MUST NOT call `swap build-swap` (Step 5) without first completing the quote (Step 2) and allowance check (Step 3).
+- **NEVER execute a step before its predecessor has completed successfully** (on-chain `status: success` for write operations, valid JSON response for read operations).
+- **If a step fails**, follow STOP CONDITION 1 (`references/safety-prohibitions.md`). Do NOT skip the failed step and continue with later steps.
+- **If a step's precondition is not met** (e.g. allowance already sufficient at Step 3), the step may be **explicitly marked as skipped with reason** in the output to the user, but execution must still proceed to the **next sequential step** — never jump ahead by more than one step.
+
+### Rule W-2: User Confirmation Gate Before Transaction Execution
+
+For **any** on-chain transaction (approve, swap, LP add/remove, Aave supply/borrow/repay/withdraw/set-collateral, wrap/unwrap), you MUST present a **Transaction Confirmation Summary** and receive **explicit user approval** before signing.
+
+The summary MUST include:
+
+1. **Intent** — One-sentence description of what the user asked for.
+2. **Transaction details** — Operation type, input/output tokens & amounts (with USD estimate), recipient address, slippage protection, price impact, gas estimate.
+3. **Risk warnings** — Price impact > 0.2%, large approvals, Isolation Mode caveats, etc.
+
+**Format:**
+
+```
+⚠️ Transaction Confirmation
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Intent:     <what the user asked for>
+Operation:  <Swap / Approve / Supply / ...>
+Input:      <amount> <token> (≈ $<usd>)
+Output:     <expected_amount> <token> (≈ $<usd>)
+Min output: <amount_out_min> <token>
+Impact:     <price_impact>%
+Recipient:  <address>
+Est. gas:   <gas> MNT
+Warnings:   <any risks>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Proceed? (yes/no)
+```
+
+- **NEVER broadcast without user confirmation.** "no" or no response → STOP.
+- **Each transaction needs its own confirmation** — do NOT batch (e.g. approve and swap are confirmed separately).
+- This applies **even in auto-mode** — every fund-moving tx requires explicit human approval.
+
+### Rule W-3: Rate Limiting
+
+- **Minimum 2-second gap** between consecutive `mantle-cli` calls. Never fire CLI commands in rapid succession.
+- **No parallel CLI calls** — wait for the previous command's response before issuing the next.
+- **After any write tx is confirmed**, wait at least **5 seconds** before the next write command to allow on-chain state (balances, allowances, positions) to settle.
+- **On ANY `mantle-cli` non-zero exit (including RPC timeout / rate-limit)**: STOP immediately per STOP CONDITION 1. Do NOT auto-retry write commands (`approve`, `swap build-swap`, `wrap-mnt`, `unwrap-mnt`, `lp add/remove/collect-fees`, `aave supply/borrow/repay/withdraw/set-collateral`) — re-running a build or sign step after a timeout risks a duplicate broadcast with stale state.
+- **Post-sign receipt polling is the ONLY permitted retry path** — if the tx was already signed and broadcast (you have a hash), you MAY retry `mantle-cli chain tx --hash <hash> --json` until you get a deterministic `status: success | reverted`. Rebuilding / re-signing is governed by Rule W-8 only.
+
+### Rule W-4: Post-Operation Balance Verification (MANDATORY)
+
+After **any** write tx confirms (`status: success`), ALWAYS run `mantle-cli account balances <wallet> --json` to fetch actual on-chain balances (full-whitelist coverage per Rule W-7). **NEVER report, display, or infer balance changes from your own calculation** — only show what the CLI returns. Fabricated or estimated balances are prohibited.
+
+### Rule W-5: Swap Direction Disambiguation ⚠️
+
+When the user says "use **X** to get **N Y**", "swap **X** for **N Y**", or "buy **N Y** with **X**":
+- **N** is the **output** quantity (Y tokens to receive) — NOT the input amount.
+- **❌ Wrong:** "use MNT to get 10 USDC" → interpreted as "swap 10 MNT → USDC"
+- **✅ Correct:** "use MNT to get 10 USDC" → target output ≈ 10 USDC
+- **✅ Converse:** "swap 10 MNT for USDC" → input = 10 MNT (output variable). The number attaches to the side it's adjacent to — never flip it.
+
+**Estimating the input amount (the CLI only supports fixed-input swaps).** Do NOT guess how much X is needed to receive N Y. Instead, use a reverse `swap-quote` to derive the estimate from live on-chain liquidity:
+
+1. Call `mantle-cli defi swap-quote --in Y --out X --amount N --provider best --json` — this asks "if I swapped N Y back to X right now, how much X would I get?", which is a good proxy for the X needed to buy N Y.
+2. Take the quoted X amount and add a small buffer (suggest +0.5%–1%) to cover slippage, fees, and price impact asymmetry between the two directions. This buffered X is the input for the real forward swap.
+3. In the Transaction Confirmation Summary (Rule W-2), clearly state: input = `<buffered X>`, expected output ≈ `N Y` (may be slightly higher or lower), and the buffer %. Let the user approve or adjust the buffer before you broadcast.
+4. If the user insists on receiving **exactly** N Y (not ≈ N Y), inform them the CLI has no fixed-output swap and the reverse-quote method is the closest feasible approach — never silently claim exact output, and never flip input/output to fake a fixed-output swap.
+
+### Rule W-6: Allowance Disclosure & Approve Confirmation
+
+After every `allowances` check, display the **current allowance (raw + human-readable), spender address, and the required amount** for the planned operation to the user BEFORE deciding to approve or skip. If `approve` is required, present the exact spender address and approval amount in the Transaction Confirmation Summary (Rule W-2) for explicit user approval. Do NOT silently approve (max or otherwise), and do NOT silently skip approve based on your own reading of the allowance.
+
+### Rule W-7: Full-Whitelist Balance Query
+
+When querying balances **without a specific asset filter**, you MUST return **all whitelisted assets** — never omit any. Procedure:
+
+1. Run `mantle-cli account balances <wallet> --json` without token filters.
+2. Cross-check the response against the whitelisted token list from `mantle-cli catalog list --json` (or `mantle-cli swap pairs --json`).
+3. For any whitelisted asset missing from step 1's output, query it explicitly and merge the result.
+
+Silently omitting any whitelisted asset (e.g., MOE) from a balance report is a hard error — never present an incomplete portfolio.
+
+### Rule W-8: Signing Flow Integrity 🔐
+
+**Canonical path:** `mantle-cli` build → pass `signable_tx` **verbatim** to Privy API (`sign evm-transaction --transaction`) → broadcast → wait for on-chain receipt. No shortcuts, no alternatives.
+
+**Two views, one transaction.** Every `mantle-cli` build command returns both:
+
+```ts
+unsigned_tx: {                    // Signer-agnostic view. Use for logging / diffing / non-Privy signers (viem, ethers).
+  to: string;
+  data: string;
+  value: string;                  // hex ("0x0")
+  chainId: number;                // INTEGER (e.g. 5000)
+  gas?: string;
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
+  nonce?: number;                 // INTEGER
+  // no `from` field
+};
+
+signable_tx: {                    // Privy-ready view. This is what Privy's `--transaction` parameter consumes.
+  from: string;                   // sender wallet address — already filled in
+  to: string;
+  data: string;
+  value: string;                  // hex
+  chainId: string;                // HEX STRING (e.g. "0x1388")
+  gas?: string;
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
+  nonce?: string;                 // HEX STRING (e.g. "0xc6")
+};
+```
+
+- **Privy signing MUST consume `signable_tx`.** Extract it with `jq -c .signable_tx <file>` and pass it verbatim as `--transaction`. Never hand-convert `unsigned_tx` (chainId/nonce int→hex, appending `from`, etc.) — that conversion is precisely the error class `signable_tx` was added to eliminate.
+- **Never mutate, strip, or re-encode** any field in `signable_tx`. No wrapping in `{"params":[…]}`. No casing changes. No field omission. Byte-for-byte what the CLI emitted.
+- **Never hand-assemble either object** from your own values — the CLI is the sole producer. Fabricating `to` / `data` / `value` / gas params is the same violation as Hard Constraint #4 (no fabricated calldata).
+- **If the CLI output lacks a `signable_tx` field** (older binary, malformed response), **STOP**. Do NOT fall back to manually transforming `unsigned_tx` — upgrade the CLI and rebuild. Silent manual conversion is what caused the ~10-round sign retries in past runs.
+
+**One `signable_tx` = one signature. No exceptions.**
+
+- After signing, WAIT for the receipt (`mantle-cli chain tx --hash <hash> --json`) before any further action.
+- **On 504 / timeout / network error:** do NOT re-sign. First query the chain for the receipt — if the tx is already mined (any status), resume from there; only if it is truly absent from the chain may you rebuild via `mantle-cli` (new `idempotency_key`) and sign the **new** `signable_tx`. Re-signing the old one risks duplicate broadcast and nonce collision.
+- **If Privy timed out before returning a tx hash** (signing-stage failure, no broadcast): there is nothing to query on-chain. Rebuild via `mantle-cli` with a new `idempotency_key` and sign the fresh `signable_tx`. Discard the old one.
+- **If Privy rejects the request with a format error** (e.g. "chainId must start with 0x", "value must be hex"): do NOT start hand-patching fields. Assume the `signable_tx` extraction was wrong (e.g. double-serialization, accidental wrapping). Re-extract from the build output file with `jq -c .signable_tx` and retry exactly once. Two consecutive rejections → STOP and surface the raw error.
+
+### Rule W-9: Pre-Execution Readiness Check (MANDATORY)
+
+**⛔ Balance AND allowance are TWO separate `mantle-cli` tool calls — never merged into one pipeline. The allowance value MUST come from `mantle-cli account allowances --json`, not from a piped script or inference. Completing only the balance check is a hard error.**
+
+Before executing **ANY** write operation (swap, approve, lp add/remove, aave supply/borrow/repay/withdraw/set-collateral, wrap/unwrap), confirm the user's intent is feasible against actual on-chain state. Two queries, in this order:
+
+1. **Balance check** — `mantle-cli account token-balances <wallet> --json`. Verify `balance(input_token) ≥ planned input amount` (for wrap/unwrap: native MNT for wrap, WMNT for unwrap). If insufficient → **STOP**, report the actual balance to the user, do NOT proceed.
+2. **Allowance check** — `mantle-cli account allowances <wallet> --pairs <token>:<spender> --json`. Verify `allowance(input_token, spender) ≥ planned input amount`. If insufficient → route to the approve flow (Rule W-6). Do NOT silently skip.
+
+These checks MUST occur BEFORE the Transaction Confirmation Summary (Rule W-2) — the summary presented to the user MUST reflect real on-chain state, not assumptions. Starting a write op without both queries is a hard error.
+
+**Skip conditions** (narrow): balance check is not required for pure read ops; allowance check is not required for native-MNT-only ops (e.g. `swap wrap-mnt`) or for protocols the user has no intent of touching. When in doubt, run both.
+
+> **Incident:** Agent piped `account token-balances` through `python3 -c "..."` which printed `USDC: 3.408142 Current allowance: 0.5`. The CLI only queried balances — the `0.5` did not come from `account allowances` and is unauditable. Correct fix: two separate `mantle-cli ... --json` tool calls.
+
+## Available Tools
+
+| Tool | Purpose | Command |
+|------|---------|---------|
+| Catalog | Discover capabilities, tokens, pools | `mantle-cli catalog list / search / show` |
+| Swap | DEX exchange | `mantle-cli swap pairs / wrap-mnt / unwrap-mnt / build-swap` + `mantle-cli defi swap-quote` |
+| LP | Liquidity provision | `mantle-cli lp top-pools / find-pools / add / remove / collect-fees` + `mantle-cli defi analyze-pool` + `mantle-cli lp suggest-ticks` |
+| Aave | Lending / borrowing | `mantle-cli aave supply / borrow / repay / withdraw / set-collateral / positions` |
+| Account | Read state | `mantle-cli account allowances / balances` + `mantle-cli chain tx / estimate-gas` |
+
+> **Token transfers are NOT in the toolset.** `mantle-cli transfer send-native` / `transfer send-token` and the corresponding `mantle_buildTransferNative` / `mantle_buildTransferToken` MCP tools have been deliberately removed. Refuse transfer requests per Hard Constraint #3 — do NOT fall back to the utils pipeline to simulate one.
+
+> **No escape hatch.** If a user's request can't be expressed by the verbs above, **refuse** (see Hard Constraint #3). Do NOT use Python, JS, raw RPC, or `utils` calldata construction.
 
 ## When to Use
 
-- User asks to swap tokens on Mantle
-- User asks to add/remove liquidity on a DEX
-- User asks to supply/borrow on Aave V3
-- User asks about available assets or trading pairs
-- User asks how to maximize yield or portfolio value
+- Swap tokens on Mantle (Agni, Fluxion, Merchant Moe)
+- Add / remove liquidity on a whitelisted DEX
+- Supply / borrow on Aave V3
+- Discover available assets, pools, or trading pairs (via `catalog` / `swap pairs` / `lp find-pools`)
+- Optimize portfolio value (yield, leverage, exit timing)
+- **Any DeFi operation that is part of the Mantle asset accumulation competition (OpenClaw / 龙虾活动)**
 
-## Whitelisted Assets
+## Routing Priority (MANDATORY)
 
-Only these assets count toward the competition score:
+**This skill is the SOLE entry point for all Mantle asset accumulation competition operations.** Any request that matches the conditions below MUST be handled by this skill — do NOT delegate to `$mantle-defi-operator` or any other skill:
 
-### Core Tokens
+- The user mentions OpenClaw, 龙虾, asset accumulation competition, or the competition wallet
+- The user requests swap / LP / Aave / approve / wrap / unwrap on Mantle with a competition context
+- The user asks to check balances, positions, or portfolio value in a competition context
+- The user asks to optimize portfolio value, yield strategy, leverage, or exit timing for the competition
 
-| Symbol | Address | Decimals |
-|--------|---------|----------|
-| MNT | Native gas token | 18 |
-| WMNT | `0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8` | 18 |
-| WETH | `0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111` | 18 |
-| USDC | `0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9` | 6 |
-| USDT | `0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE` | 6 |
-| USDT0 | `0x779Ded0c9e1022225f8E0630b35a9b54bE713736` | 6 |
-| MOE | `0x4515A45337F461A11Ff0FE8aBF3c606AE5dC00c9` | 18 |
+**Why?** `$mantle-defi-operator` produces execution-ready *plans* but does NOT enforce the safety constraints (STOP-on-error, sign-and-WAIT, user confirmation gates, CLI-only, no fabricated calldata) that are critical for real fund operations in the competition. Routing competition operations to `$mantle-defi-operator` bypasses these guardrails and risks duplicate broadcasts, stale allowances, and fund loss.
 
-> **USDT vs USDT0:** Both are official USDT on Mantle. Both have DEX liquidity. Only USDT0 is on Aave V3. Swap USDT↔USDT0 on Merchant Moe (bin_step=1).
+If a non-competition Mantle DeFi request arrives (e.g. general protocol comparison, venue discovery without execution intent), delegate to `$mantle-defi-operator`.
 
-### xStocks RWA Tokens (Fluxion V3 pools, all paired with USDC, fee_tier 3000)
+## Intent Routing — 自然语言 → Workflow
 
-| Symbol | Address | Pool (USDC pair) |
-|--------|---------|-----------------|
-| wTSLAx | `0x43680abf18cf54898be84c6ef78237cfbd441883` | `0x5e7935d70b5d14b6cf36fbde59944533fab96b3c` |
-| wAAPLx | `0x5aa7649fdbda47de64a07ac81d64b682af9c0724` | `0x2cc6a607f3445d826b9e29f507b3a2e3b9dae106` |
-| wCRCLx | `0xa90872aca656ebe47bdebf3b19ec9dd9c5adc7f8` | `0x43cf441f5949d52faa105060239543492193c87e` |
-| wSPYx | `0xc88fcd8b874fdb3256e8b55b3decb8c24eab4c02` | `0x373f7a2b95f28f38500eb70652e12038cca3bab8` |
-| wHOODx | `0x953707d7a1cb30cc5c636bda8eaebe410341eb14` | `0x4e23bb828e51cbc03c81d76c844228cc75f6a287` |
-| wMSTRx | `0x266e5923f6118f8b340ca5a23ae7f71897361476` | `0x0e1f84a9e388071e20df101b36c14c817bf81953` |
-| wNVDAx | `0x93e62845c1dd5822ebc807ab71a5fb750decd15a` | `0xa875ac23d106394d1baaae5bc42b951268bc04e2` |
-| wGOOGLx | `0x1630f08370917e79df0b7572395a5e907508bbbc` | `0x66960ed892daf022c5f282c5316c38cb6f0c1333` |
-| wMETAx | `0x4e41a262caa93c6575d336e0a4eb79f3c67caa06` | `0x782bd3895a6ac561d0df11b02dd6f9e023f3a497` |
-| wQQQx | `0xdbd9232fee15351068fe02f0683146e16d9f2cea` | `0x505258001e834251634029742fc73b5cab4fd67d` |
+Map the user's phrase (中/EN) to a CLI namespace BEFORE any call. Ask when ambiguous.
 
-## Whitelisted Protocols & Contracts
+- 兑换 / 交易 / 买 / 卖 / swap / trade → `swap` + `defi swap-quote` (§Swap)
+- 包装 / wrap / unwrap MNT → `swap wrap-mnt` / `unwrap-mnt` (§Swap)
+- **添加 / 提供流动性 / 做市 / add LP** → `lp top-pools → find-pools → defi analyze-pool → suggest-ticks → add` (§Add Liquidity, `references/lp-workflow.md`)
+- 移除流动性 / remove LP / collect fees → `lp positions / remove / collect-fees`
+- 存 / 借 / 还 / 取 (Aave) / supply / borrow / repay / withdraw → `aave <verb>` / `set-collateral` (§Aave)
+- 授权 / approve → `approve` (embedded per workflow)
+- 余额 / 仓位 / balance / positions → `account balances / allowances`, `aave positions`, `lp positions` (read-only)
 
-### DEX: Merchant Moe (Liquidity Book AMM)
+**Disambiguation:** "USDT" → clarify USDT vs USDT0 (§USDT ≠ USDT0). Generic "BTC / ETH / stable" → §Asset Alias. "提供流动性" with no pair → start at `lp top-pools`, NOT `lp add`. "存到 Aave / 转到 PositionManager" → function-call verb, NEVER ERC-20 transfer (Hard Constraint #3).
 
-| Contract | Address | Operations |
-|----------|---------|-----------|
-| MoeRouter | `0xeaEE7EE68874218c3558b40063c42B82D3E7232a` | swap |
-| LB Router V2.2 | `0x013e138EF6008ae5FDFDE29700e3f2Bc61d21E3a` | swap, add/remove LP |
+## Workflow: Swap (skeleton)
 
-**Key pairs:**
-- USDC/USDT0: bin_step=1 (stablecoin)
-- USDC/USDT: bin_step=1 (stablecoin)
-- USDT/USDT0: bin_step=1 (stablecoin conversion)
-- USDe/USDT0: bin_step=1
-- USDe/USDT: bin_step=1
-- WMNT/USDC: bin_step=20
-- WMNT/USDT0: bin_step=20
-- WMNT/USDT: bin_step=15
-- WMNT/USDe: bin_step=20
-
-### DEX: Agni Finance (Uniswap V3 fork)
-
-| Contract | Address | Operations |
-|----------|---------|-----------|
-| SwapRouter | `0x319B69888b0d11cEC22caA5034e25FfFBDc88421` | swap |
-| PositionManager | `0x218bf598D1453383e2F4AA7b14fFB9BfB102D637` | add/remove LP |
-
-**Key pairs:**
-- WETH/WMNT: fee_tier=500 (0.05%)
-- USDC/WMNT: fee_tier=10000 (1%)
-- USDT0/WMNT: fee_tier=500 (0.05%)
-- mETH/WETH: fee_tier=500 (0.05%)
-
-### DEX: Fluxion (Uniswap V3 fork, native to Mantle)
-
-| Contract | Address | Operations |
-|----------|---------|-----------|
-| SwapRouter | `0x5628a59df0ecac3f3171f877a94beb26ba6dfaa0` | swap |
-| PositionManager | `0x2b70c4e7ca8e920435a5db191e066e9e3afd8db3` | add/remove LP |
-
-**All xStocks pools**: USDC paired, fee_tier=3000 (0.3%). See xStocks table above for pool addresses.
-
-### Lending: Aave V3
-
-| Contract | Address | Operations |
-|----------|---------|-----------|
-| Pool | `0x458F293454fE0d67EC0655f3672301301DD51422` | supply, borrow, repay, withdraw |
-| ProtocolDataProvider | `0x487c5c669D9eee6057C44973207101276cf73b68` | read-only queries |
-
-**Supported reserve assets:** WETH, WMNT, USDT0, USDC, USDe, sUSDe, FBTC, syrupUSDT, wrsETH, GHO
-> Only USDT0 is supported — NOT USDT. Swap USDT → USDT0 first if needed.
-
-## DeFi Operations — Step-by-Step
-
-### How to Transfer Tokens
-
-**Native MNT transfer:**
-```
-mantle-cli transfer send-native --to <recipient> --amount <n> --json
-→ Sign and broadcast
-```
-
-**ERC-20 token transfer (USDC, WMNT, USDT, etc.):**
-```
-mantle-cli transfer send-token --token <symbol> --to <recipient> --amount <n> --json
-→ Sign and broadcast
-```
-
-> **IMPORTANT:** NEVER manually compute wei values or hex-encode amounts for transfers. Always use the CLI transfer commands above — they handle decimal conversion deterministically.
-
-### How to Swap Tokens
-
-**Pre-condition:** You have the input token in your wallet.
+> **⚠ Steps MUST be executed in strict order (Rule W-1). Each transaction requires user confirmation (Rule W-2).**
 
 ```
-1. mantle-cli swap pairs --json
-   → Find the pair and its params (bin_step or fee_tier)
-
-2. mantle-cli defi swap-quote --in X --out Y --amount 10 --provider best --json
-   → Get the expected output and minimum_out
-
-3. mantle-cli account allowances <wallet> --pairs X:<router> --json
-   → Check if already approved
-
-4. IF allowance < amount:
-   mantle-cli swap approve --token X --spender <router> --amount <amount> --json
-   → Sign and broadcast
-
-5. mantle-cli swap build-swap --provider <dex> --in X --out Y --amount 10 --recipient <wallet> --amount-out-min <from_quote> --json
-   → Sign and broadcast
+0. mantle-cli catalog show mantle_buildSwap --json                     → verify command exists, get template & workflow_before
+   ↓ MUST complete before Step 1 (Hard Constraint #8)
+1. mantle-cli swap pairs --json                                      → find bin_step / fee_tier
+   ↓ MUST complete before Step 2
+2. mantle-cli defi swap-quote --in X --out Y --amount N --provider best --json   → minimum_out_raw
+   ⚠️ SAVE the `minimum_out_raw` value from the response — pass it VERBATIM to --amount-out-min in Step 5.
+      DO NOT convert, multiply, or recalculate. See "Slippage Protection Rules" (Hard Constraint #6).
+   ↓ MUST complete before Step 3
+3. mantle-cli account allowances <wallet> --pairs X:<router> --json  → allowance check
+   ↓ MUST complete before Step 4
+4. IF insufficient: mantle-cli approve ...                           → ⚠️ USER CONFIRMATION → sign & WAIT
+   ↓ MUST confirm tx success before Step 5
+5. ⚠️ USER CONFIRMATION — present Transaction Confirmation Summary:
+   - Intent, input/output tokens & amounts, amount_out_min, price impact, gas estimate
+   → User must explicitly approve before proceeding
+   mantle-cli swap build-swap --provider <dex> --in X --out Y ... --amount-out-min <minimum_out_raw from Step 2, VERBATIM> --sender <wallet> --json
+   ⚠️ --amount-out-min MUST be the EXACT `minimum_out_raw` from Step 2. NEVER set to 0, 1, or any lower value.
+      If this reverts → re-quote (Step 2), do NOT lower amount-out-min. See "Slippage Protection Rules".
+                                                                     → sign & WAIT
+   ↓ MUST confirm tx success before Step 6
+6. mantle-cli chain tx --hash <hash> --json                          → verify status: success
 ```
 
-**For MNT → Token swaps:** Wrap MNT first with `mantle-cli swap wrap-mnt --amount <n> --json`, then swap WMNT.
+For MNT input: `swap wrap-mnt` first, then swap WMNT. For MNT output: swap to WMNT, then `swap unwrap-mnt`. Full step-by-step with retry logic and edge cases → **`references/swap-workflow.md`**.
 
-### How to Add Liquidity
+## Workflow: Add Liquidity (skeleton)
 
-**Agni / Fluxion (V3 concentrated liquidity):**
-```
-1. Approve both tokens for the PositionManager
-   mantle-cli swap approve --token <tokenA> --spender <position_manager> --amount <n> --json
-   mantle-cli swap approve --token <tokenB> --spender <position_manager> --amount <n> --json
-
-2. mantle-cli lp add \
-     --provider agni \
-     --token-a WMNT --token-b USDC \
-     --amount-a 5 --amount-b 4 \
-     --recipient <wallet> \
-     --fee-tier 10000 \
-     --tick-lower <lower> --tick-upper <upper> \
-     --json
-
-3. Sign and broadcast → Receive NFT position
-```
-
-**Merchant Moe (Liquidity Book):**
-```
-1. Approve both tokens for LB Router (0x013e138EF6008ae5FDFDE29700e3f2Bc61d21E3a)
-   mantle-cli swap approve --token <tokenA> --spender 0x013e138EF6008ae5FDFDE29700e3f2Bc61d21E3a --amount <n> --json
-   mantle-cli swap approve --token <tokenB> --spender 0x013e138EF6008ae5FDFDE29700e3f2Bc61d21E3a --amount <n> --json
-
-2. mantle-cli lp add \
-     --provider merchant_moe \
-     --token-a WMNT --token-b USDe \
-     --amount-a 5 --amount-b 4 \
-     --recipient <wallet> \
-     --bin-step 20 \
-     --active-id <from_pool> \
-     --delta-ids '[-5,-4,-3,-2,-1,0,1,2,3,4,5]' \
-     --distribution-x '[0,0,0,0,0,0,1e17,1e17,2e17,2e17,3e17]' \
-     --distribution-y '[3e17,2e17,2e17,1e17,1e17,0,0,0,0,0,0]' \
-     --json
-
-3. Sign and broadcast → Receive LB tokens
-```
-
-### How to Use Aave V3
-
-**Supply (earn interest):**
-```
-1. mantle-cli swap approve --token USDC --spender 0x458F293454fE0d67EC0655f3672301301DD51422 --amount 100 --json
-   → Sign and broadcast
-
-2. mantle-cli aave supply --asset USDC --amount 100 --on-behalf-of <wallet> --json
-   → Sign and broadcast → Receive aUSDC (grows with interest)
-```
-
-**Borrow (leverage):**
-```
-1. Supply collateral first (see above)
-
-2. mantle-cli aave positions --user <wallet> --json
-   → Verify collateral_enabled=YES for the supplied asset
-   → If collateral_enabled=NO or total_collateral_usd=0:
-
-3. mantle-cli aave set-collateral --asset <supplied_asset> --user <wallet> --json
-   → Use the ACTUAL asset you supplied (e.g. WMNT, WETH, USDC) — not always WMNT
-   → Runs preflight diagnostics (checks aToken balance, LTV, reserve status)
-   → If LTV_IS_ZERO: this asset CANNOT be collateral by design — do NOT proceed
-   → Sign and broadcast → Enables the supplied asset as collateral
-   → IMPORTANT: the signing wallet MUST be <wallet> itself (set-collateral operates on msg.sender)
-
-4. mantle-cli aave borrow --asset USDC --amount 50 --on-behalf-of <wallet> --json
-   → Sign and broadcast → Receive USDC, incur variableDebtUSDC
-```
-
-NOTE: Step 3 is only needed if collateral was NOT auto-enabled after supply. This is
-especially common with Isolation Mode assets (WMNT, WETH). Always verify with positions first.
-
-**Repay:**
-```
-1. mantle-cli swap approve --token USDC --spender 0x458F293454fE0d67EC0655f3672301301DD51422 --amount 50 --json
-2. mantle-cli aave repay --asset USDC --amount 50 --on-behalf-of <wallet> --json
-   OR --amount max to repay full debt
-```
-
-**Withdraw:**
-```
-1. mantle-cli aave withdraw --asset USDC --amount 50 --to <wallet> --json
-   OR --amount max for full balance
-```
-
-### How to Analyze Pools Before LP
-
-Before adding liquidity, analyze the pool to choose the best range and estimate returns:
+> **⚠ Steps MUST be executed in strict order (Rule W-1). Each transaction requires user confirmation (Rule W-2).**
 
 ```
-0. mantle-cli lp top-pools --sort-by apr --min-tvl 10000 --json
-   → Discover the BEST pools across ALL DEXes (no token pair needed) — use when user asks "best LP" or "where to provide liquidity"
-
-1. mantle-cli lp find-pools --token-a WMNT --token-b USDC --json
-   → Discover all available pools for a specific pair across Agni, Fluxion, Merchant Moe
-
-2. mantle-cli defi analyze-pool --token-a WMNT --token-b USDC --fee-tier 3000 --provider agni --investment 1000 --json
-   → Get fee APR, multi-range comparison, risk assessment, investment projections
-
-3. mantle-cli lp suggest-ticks --token-a WMNT --token-b USDC --fee-tier 3000 --provider agni --json
-   → Get tick range suggestions (wide/moderate/tight strategies)
+0. mantle-cli catalog show mantle_addLiquidity --json                → verify command exists, get template & workflow_before
+   ↓ MUST complete before Step 1 (Hard Constraint #8)
+1. mantle-cli lp top-pools --sort-by apr --min-tvl 10000 --json   (OR: lp find-pools for a specific pair)
+   ↓ MUST complete before Step 2
+2. mantle-cli defi analyze-pool ... --investment N --json         → APR, risk, projections
+   ↓ MUST complete before Step 3
+3. mantle-cli lp suggest-ticks ... --json                         → wide / moderate / tight
+   ↓ MUST complete before Step 4
+4. ⚠️ USER CONFIRMATION — present LP Confirmation Summary:
+   - Intent, pool, token amounts, tick/bin range, strategy, estimated APR, risk warnings
+   → User must explicitly approve before proceeding to approvals
+   mantle-cli approve --token A --spender <position_manager>      → sign & WAIT
+   ↓ MUST confirm tx success
+5. mantle-cli approve --token B --spender <position_manager>      → ⚠️ USER CONFIRMATION → sign & WAIT
+   ↓ MUST confirm tx success before Step 6
+6. mantle-cli lp add ... --sender <wallet> --json                 → ⚠️ USER CONFIRMATION → sign & WAIT
 ```
 
-## Safety Rules
+V3 (Agni / Fluxion) takes `--fee-tier`, `--tick-lower`, `--tick-upper`. LB (Merchant Moe) takes `--bin-step`, `--active-id`, `--delta-ids`, `--distribution-x/y`. xStocks LP only on Fluxion (USDC pairs, fee_tier=3000). Full args → **`references/lp-workflow.md`**.
 
-**⛔ ABSOLUTE PROHIBITION — MANUAL TRANSACTION CONSTRUCTION ⛔**
+## Workflow: Aave Supply → Borrow (skeleton)
 
-You MUST NEVER, under ANY circumstances, do ANY of the following:
-- Compute calldata, function selectors, or ABI-encoded parameters yourself (via Python, JS, manual hex, or any other method)
-- Manually hex-encode token amounts, wei values, or transfer data
-- Construct `unsigned_tx` objects by hand instead of using `mantle-cli`
-- Use Python/JS scripts to build or encode transaction data
-- Call `sign evm-transaction`, `eth_sendRawTransaction`, or any direct broadcast tool with manually constructed data
-- Claim "the CLI doesn't support this operation" as justification for manual construction
+> **⚠ Steps MUST be executed in strict order (Rule W-1). Each transaction requires user confirmation (Rule W-2).**
 
-**This prohibition has NO exceptions.** If you believe the CLI doesn't support an operation, you are WRONG — check the catalog first. If it truly doesn't exist, use the safe encoding utilities below. Do NOT use Python/JS.
-
-**EVERY on-chain operation the CLI supports:**
-```
-mantle-cli transfer send-native --to <addr> --amount <n> --json        # Native MNT transfer
-mantle-cli transfer send-token --token <sym> --to <addr> --amount <n> --json  # ANY ERC-20 transfer (USDC, USDT, WMNT, etc.)
-mantle-cli swap wrap-mnt --amount <n> --json                           # Wrap MNT → WMNT
-mantle-cli swap unwrap-mnt --amount <n> --json                         # Unwrap WMNT → MNT
-mantle-cli swap approve --token <t> --spender <addr> --amount <n> --json  # ERC-20 approve
-mantle-cli swap build-swap --provider <dex> --in <t> --out <t> --amount <n> --recipient <addr> --json  # DEX swap
-mantle-cli lp add / remove / collect-fees ...                          # LP operations
-mantle-cli aave supply / borrow / repay / withdraw / set-collateral ...  # Aave operations
-```
-
-**Safe encoding utilities (ESCAPE HATCH for unsupported operations):**
-If the operation truly has no dedicated CLI command, use these utils instead of Python/JS:
-```
-mantle-cli utils parse-units --amount <decimal> --decimals <n> --json   # Step 1: Decimal → raw/wei (NEVER compute manually!)
-mantle-cli utils format-units --amount-raw <raw> --decimals <n> --json  # Reverse: Raw/wei → decimal
-mantle-cli utils encode-call --abi '<abi>' --function <name> --args '<json>' --json  # Step 2: ABI-encode function call → hex calldata
-mantle-cli utils build-tx --to <addr> --data <hex> [--value <mnt>] --json  # Step 3: Wrap calldata into unsigned_tx (validates address + hex)
-```
-**Full workflow for unsupported operations:**
-1. `parse-units` — convert any decimal amounts to raw integers
-2. `encode-call` — ABI-encode the function call with the raw integer args
-3. `build-tx` — wrap the calldata + target address into a validated unsigned_tx
-This replaces ALL manual Python/JS computation. The output is an `unsigned_tx` with `⚠ UNVERIFIED` warning.
-
-**Real incident**: Agent bypassed `mantle-cli transfer send-token` for a USDC transfer, manually computed calldata with Python, and produced incorrect encoding — causing fund loss. The CLI command `mantle-cli transfer send-token --token USDC --to <addr> --amount <n>` would have handled this correctly and safely.
-
----
-
-0. **NEVER BUILD THE SAME TRANSACTION TWICE (CRITICAL — FUND SAFETY)**:
-   - Call each build command EXACTLY ONCE per user-requested action. NEVER call the same build command a second time with identical parameters to "verify" or "retry" — each built transaction may be signed and broadcast, causing **duplicate transfers and irreversible fund loss**.
-   - Every build response includes an `idempotency_key` scoped to the signing wallet. ALWAYS pass `sender=<signing_wallet>` when calling build tools. If you accidentally call a builder twice and get the same key, the signer must execute only ONE.
-   - If a transaction times out or you lose track of it, do NOT rebuild. Check the receipt first: `mantle-cli chain tx --hash <hash>`. The original may have already been mined. Rebuilding creates a new transaction with a different nonce that will ALSO execute.
-   - **Real incident**: duplicate build calls caused 2× transfers to the same recipients — 0.2 MNT sent twice and 0.608 MNT sent twice.
-1. **CLI only — never use MCP** — All operations via `mantle-cli ... --json`. Do not enable or connect to the MCP server.
-2. **Never fabricate calldata outside the CLI** — Always use `mantle-cli` build commands or `mantle-cli utils encode-call` + `mantle-cli utils build-tx`. NEVER use Python `encode_abi`, JS `encodeFunctionData`, manual `0xa9059cbb` selectors, or any non-CLI method to produce calldata.
-3. **Never manually compute hex/wei values** — NEVER use Python, JS, or mental arithmetic to calculate `amount * 10**decimals` or hex-encode transfer amounts. Use `mantle-cli utils parse-units` for decimal→raw conversion. Use `mantle-cli transfer send-native` for MNT transfers and `mantle-cli transfer send-token` for ANY ERC-20 transfers. Real incident: manual hex computation produced wrong amounts (15 MNT intended → 56.28 MNT sent).
-4. **Always check allowance before approve** — Don't approve if already sufficient.
-5. **Always get a quote before swap** — Use `mantle-cli defi swap-quote` to know expected output and get `minimum_out_raw` for slippage protection.
-6. **Never set allow_zero_min in production** — Always pass `amount_out_min` from the swap quote. Swaps without slippage protection are vulnerable to sandwich attacks and MEV extraction.
-7. **Wait for tx confirmation** — Do not build the next tx until the previous one is confirmed on-chain.
-8. **Show `human_summary`** — Present every build command's summary to the user before signing.
-9. **Value field is hex** — The `unsigned_tx.value` is hex-encoded (e.g., "0x0"). Pass it directly to the signer.
-10. **MNT is gas, not ERC-20** — MNT is the native gas token. To swap MNT, wrap it to WMNT first (`mantle-cli swap wrap-mnt`). To transfer MNT, use `mantle-cli transfer send-native`. Do NOT pass "MNT" to swap/approve/LP commands — those require WMNT.
-11. **Unsupported operations — USE UTILS, NOT PYTHON** — If a user requests an operation that has no corresponding dedicated `mantle-cli` command:
-    - **Warn the user** that this operation is not covered by standard CLI tooling and carries higher risk
-    - **Use the CLI utils pipeline** (NEVER Python/JS): `utils parse-units` → `utils encode-call` → `utils build-tx`
-    - **Require explicit user confirmation** before signing the `⚠ UNVERIFIED` unsigned_tx
-    - If the user confirms, present the unsigned_tx with the **"⚠ UNVERIFIED MANUAL CONSTRUCTION"** warning visible
-12. **xStocks tokens are Fluxion-only** — All xStocks RWA tokens (wTSLAx, wAAPLx, wCRCLx, wSPYx, wHOODx, wMSTRx, wNVDAx, wGOOGLx, wMETAx, wQQQx) only have liquidity on Fluxion with USDC pairs (fee_tier=3000). Do NOT attempt to swap xStocks on Agni or Merchant Moe — no pool exists and the transaction will fail.
-13. **Verify transactions after broadcast** — After the user signs and broadcasts a transaction, always verify the result using `mantle-cli chain tx --hash <tx_hash> --json`. Check `status` is `"success"`. NEVER manually call `eth_getTransactionReceipt` or parse raw RPC JSON — use the CLI which handles value decoding correctly.
-14. **Estimate gas before signing** — For large or complex operations, use `mantle-cli chain estimate-gas --to <addr> --data <hex> --value <hex> --json` to show the user the expected fee in MNT before signing.
-15. **Transaction history** — The CLI cannot query full transaction history. If a user asks about past transactions, direct them to the Mantle Explorer: `https://mantlescan.xyz/address/<wallet_address>`. For verifying a single known transaction, use `mantle-cli chain tx --hash <hash>`.
-
-## Multi-Step Operation Ordering
-
-Many DeFi operations require multiple transactions in strict order. **NEVER skip steps or execute out of order** — this causes on-chain reverts and wastes gas.
-
-### Swap (MNT → Token)
-```
-1. mantle-cli swap wrap-mnt --amount <n>           → sign & WAIT for confirmation
-2. mantle-cli defi swap-quote --in WMNT --out X    → get minimum_out_raw
-3. mantle-cli account allowances <wallet> --pairs WMNT:<router>  → check allowance
-4. IF insufficient: mantle-cli swap approve ...    → sign & WAIT for confirmation
-5. mantle-cli swap build-swap ...                  → sign & WAIT for confirmation
-```
-
-### Swap (Token → Token)
-```
-1. mantle-cli defi swap-quote --in X --out Y       → get minimum_out_raw
-2. mantle-cli account allowances <wallet> --pairs X:<router>
-3. IF insufficient: mantle-cli swap approve ...    → sign & WAIT for confirmation
-4. mantle-cli swap build-swap ...                  → sign & WAIT for confirmation
-```
-
-### Aave Supply → Borrow
-```
-1. mantle-cli swap approve --token X --spender 0x458F... --amount <n>  → sign & WAIT
-2. mantle-cli aave supply --asset X --amount <n> --on-behalf-of <wallet>  → sign & WAIT
-3. mantle-cli aave positions --user <wallet>       → verify collateral_enabled
-4. IF collateral_enabled=NO: mantle-cli aave set-collateral --asset X --user <wallet>  → sign & WAIT
-5. mantle-cli aave borrow --asset Y --amount <n> --on-behalf-of <wallet>  → sign & WAIT
-```
-
-### Add Liquidity (V3)
-```
-1. mantle-cli lp find-pools --token-a A --token-b B   → discover pools
-2. mantle-cli defi analyze-pool ...                    → check APR, risk
-3. mantle-cli lp suggest-ticks ...                     → get tick range recommendations
-4. mantle-cli swap approve --token A --spender <pm>    → sign & WAIT
-5. mantle-cli swap approve --token B --spender <pm>    → sign & WAIT
-6. mantle-cli lp add ...                               → sign & WAIT
-```
-
-> **CRITICAL**: "sign & WAIT" means you must wait for on-chain confirmation (use `mantle-cli chain tx --hash <hash>` to verify `status: success`) before proceeding to the next step. Do NOT pipeline multiple unsigned transactions. Do NOT rebuild a transaction if the previous attempt timed out — check the receipt first.
-
-## Competition Scoring
+> **`aave supply` is a function call, NOT a transfer.** The CLI invokes `Pool.supply()` which pulls tokens via `transferFrom` AND mints aTokens. Never "simulate" a supply by constructing an ERC-20 `transfer()` to the Pool address (`0x458F293454fE0d67EC0655f3672301301DD51422`) — no aToken is minted, no collateral is recorded, the tokens are locked forever. Same principle for `borrow` / `repay` / `withdraw`: always use the dedicated `mantle-cli aave` verb.
 
 ```
-Net Value (USD) = Sum(token holdings * price) + Sum(aToken balances * price) - Sum(debtToken balances * price)
+0. mantle-cli catalog show mantle_aaveSupply --json                  → verify command exists, get template & workflow_before
+   ↓ MUST complete before Step 1 (Hard Constraint #8)
+1. ⚠️ USER CONFIRMATION — present Supply Confirmation Summary:
+   - Intent, asset, amount, on-behalf-of address, expected aToken receipt
+   → User must explicitly approve before proceeding
+   mantle-cli approve --token X --spender <aave-pool>   → sign & WAIT
+   ↓ MUST confirm tx success before Step 2
+2. mantle-cli aave supply --asset X --amount N --on-behalf-of <wallet> --sender <wallet> --json
+                                                                                       → ⚠️ USER CONFIRMATION → sign & WAIT
+   ↓ MUST confirm tx success before Step 3
+3. mantle-cli aave positions --user <wallet> --json   → verify collateral_enabled
+   ↓ MUST complete before Step 4
+4. IF collateral_enabled=NO: mantle-cli aave set-collateral --asset X --user <wallet> --sender <wallet>
+                                                                                       → ⚠️ USER CONFIRMATION → sign & WAIT
+   ↓ MUST confirm tx success before Step 5
+5. ⚠️ USER CONFIRMATION — present Borrow Confirmation Summary:
+   - Intent, borrow asset, amount, current health factor, projected health factor, liquidation risk
+   → User must explicitly approve before proceeding
+   mantle-cli aave borrow --asset Y --amount N --on-behalf-of <wallet> --sender <wallet> --json
+                                                                                       → sign & WAIT
 ```
 
-- aToken balances grow over time (interest earned)
-- debtToken balances grow over time (interest owed)
-- LP positions valued by underlying token amounts
-- Only interactions with whitelisted contracts count
+**Edge cases** (Isolation Mode, LTV_IS_ZERO, USDT vs USDT0, repay/withdraw with `--amount max`): see **`references/aave-workflow.md`**.
 
-## ⚠️ CLI Coverage Boundary — MUST READ
+## References
 
-The `mantle-cli` covers the following **verified-safe** operations:
+| File | Load when |
+|------|-----------|
+| `references/swap-workflow.md` | First swap of the session, or handling timeout / retry / wrap-mnt |
+| `references/lp-workflow.md` | Adding / removing liquidity, or suggesting tick ranges |
+| `references/aave-workflow.md` | Any Aave operation, or troubleshooting collateral / Isolation Mode |
+| `references/safety-prohibitions.md` | A `mantle-cli` error occurred, the user requested something outside standard verbs, or you need the full STOP protocol + numbered rule list + incident reports |
 
-| Category | Supported Operations |
-|----------|---------------------|
-| **Transfers** | Native MNT transfer, ERC-20 token transfer |
-| **Swaps** | Agni, Fluxion, Merchant Moe (direct + multi-hop) |
-| **LP** | V3 add/remove/collect-fees (Agni, Fluxion), LB add/remove (Merchant Moe) |
-| **Lending** | Aave V3 supply, borrow, repay, withdraw, set-collateral |
-| **Utility** | Wrap/unwrap MNT, ERC-20 approve, tx receipt, gas estimation |
-| **Read-only** | Balances, quotes, pool state, positions, prices, chain status |
+For full CLI documentation and the live whitelisted asset/protocol list: `mantle-cli catalog list --json` and `mantle-cli catalog show <tool-id> --json`.
 
-**Any operation NOT listed above has NO CLI support.** This includes but is not limited to:
-- Interacting with non-whitelisted protocols or contracts
-- Calling arbitrary smart contract functions
-- Token approvals to non-whitelisted spenders
-- Bridge operations
-- NFT operations
-- Governance/voting operations
+## Integrity Verification
 
-### When a User Requests an Unsupported Operation
+Each release includes `integrity.json` mapping version → SHA-256 hashes for every file. Verify after download:
 
-You MUST follow this exact protocol:
+```bash
+python3 -c "
+import hashlib, json, os, sys
+manifest = json.load(open('integrity.json'))
+ok = True
+for f, expected in manifest['files'].items():
+    actual = hashlib.sha256(open(f,'rb').read()).hexdigest()
+    if actual != expected:
+        print(f'MISMATCH {f}: expected {expected[:16]}… got {actual[:16]}…')
+        ok = False
+if ok: print(f'All files verified for v{manifest[\"version\"]}')
+else: sys.exit(1)
+"
+```
 
-1. **Immediately inform the user**: "⚠️ This operation is not covered by the verified CLI tooling."
-2. **Explain the risk clearly**: "All subsequent operations for this request will be constructed manually. Manual transaction construction bypasses the CLI's safety guarantees — including decimal/hex conversion verification, address whitelist checks, and parameter validation. **Incorrect construction can result in irreversible loss of funds.**"
-3. **Suggest alternatives**: If a supported operation can achieve the same goal, recommend it.
-4. **Require explicit confirmation**: Do NOT proceed unless the user explicitly says they understand the risk and want to continue.
-5. **If the user confirms**: Prefix every manually constructed transaction with `⚠️ UNVERIFIED MANUAL CONSTRUCTION` and remind the user to **double-check all values** (especially amounts and addresses) before signing.
-6. **If in doubt, refuse**: It is always safer to decline an unsupported operation than to risk user funds.
+**On publish/update:** regenerate `integrity.json` with new hashes and bump `version`.

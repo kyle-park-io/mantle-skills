@@ -2,6 +2,26 @@
 
 Use this standard flow for Aave V3 lending operations (supply, borrow, repay, withdraw) on Mantle.
 
+## ⚠ CRITICAL: supply is NOT a token transfer
+
+`mantle-cli aave supply` calls the Aave `Pool.supply()` function. Internally the Pool pulls tokens from the user via `transferFrom` AND mints aTokens that represent the deposit. An aToken balance is the only on-chain record that can be redeemed via `withdraw`.
+
+**Never "simulate" a supply by sending tokens to the Pool address.** A plain ERC-20 `transfer()` to `0x458F293454fE0d67EC0655f3672301301DD51422` (Aave V3 Pool) does NOT trigger Pool accounting — no aToken is minted, no collateral is recorded, and the tokens are **permanently locked** in the Pool contract with no on-chain path to recover them.
+
+| Operation | Correct command | Result |
+|-----------|-----------------|--------|
+| Supply (deposit) | `mantle-cli aave supply --asset USDC --amount 150 --on-behalf-of <wallet>` | aUSDC minted, redeemable via `withdraw` |
+| Anti-pattern (DO NOT USE) | `mantle-cli utils encode-call --abi 'function transfer(address,uint256)' ...` targeting the Pool | Tokens locked forever — no recovery |
+
+Red-flag patterns that indicate an incorrect supply plan:
+
+- The plan includes a `transfer(address,uint256)` calldata whose first argument is the Aave Pool address.
+- The plan routes `supply` through `mantle-cli utils encode-call` / `mantle-cli utils build-tx` rather than `mantle-cli aave supply`.
+- The plan presents "send USDC to Aave Pool" as equivalent to "supply USDC to Aave". These are different operations with different end states.
+- The plan omits `--on-behalf-of` and tries to avoid asking the user for their wallet address by substituting a plain transfer. **ALWAYS ask for the wallet address when it is missing** — never degrade to a plain transfer to avoid an extra round-trip.
+
+If a user request maps to supply / borrow / repay / withdraw, use the dedicated `mantle-cli aave …` command. If a user asks to "transfer tokens to Aave" in natural language, clarify with them that this means `supply`, and use the correct command. Token transfers between wallets are out of scope for this skill (see SKILL.md guardrails).
+
 ## CRITICAL: Use CLI for Transaction Building
 
 **ALWAYS use `mantle-cli` to build unsigned transactions.** Do NOT manually construct calldata, extract addresses from text, or build approve calls yourself. The CLI handles address resolution, ABI encoding, and whitelist validation correctly.
@@ -21,10 +41,10 @@ mantle-cli aave markets         --json  # check APY/TVL before deciding
 
 For approvals (required before supply/repay):
 ```bash
-mantle-cli swap approve --token USDC --spender 0x458F293454fE0d67EC0655f3672301301DD51422 --amount max --json
+mantle-cli approve --token USDC --spender 0x458F293454fE0d67EC0655f3672301301DD51422 --amount max --json
 ```
 
-The CLI outputs `unsigned_tx` with `to`, `data`, `value`, `chainId` — **no `from` field**. Pass this directly to the signer without modification.
+The CLI outputs both `unsigned_tx` (signer-agnostic, chainId/nonce integers, no `from`) and `signable_tx` (Privy-ready, hex-encoded, `from` pre-filled). Pick the one matching your signer — pass it verbatim, never hand-convert between them.
 
 ## Step 1: Check lending markets
 
@@ -94,14 +114,14 @@ mantle-cli account balance <wallet> --tokens USDC,USDT0 --json
 If allowance is insufficient for supply or repay:
 
 ```bash
-mantle-cli swap approve --token USDC \
+mantle-cli approve --token USDC \
   --spender 0x458F293454fE0d67EC0655f3672301301DD51422 \
   --amount <exact_or_max> --owner <wallet> --json
 ```
 
 - The CLI validates the spender against the whitelist.
 - Use `--owner` to check existing allowance and skip if already sufficient.
-- Sign and broadcast the approve `unsigned_tx` before proceeding to supply/repay.
+- Sign and broadcast the approve transaction (use `signable_tx` for Privy, `unsigned_tx` for other signers) before proceeding to supply/repay.
 
 ## Step 5: Build the lending transaction
 
@@ -151,15 +171,17 @@ This tool runs **preflight diagnostics** before building the transaction:
 **Important:** The `--user` flag is for diagnostics only. The actual transaction operates on `msg.sender` (the signing wallet). The signing wallet MUST be the same address as `<wallet>` — otherwise collateral will be toggled on the wrong account.
 
 If diagnostics show collateral is NOT enabled and LTV > 0:
-1. Sign and broadcast the `set-collateral` unsigned_tx (signer must be `<wallet>`)
+1. Sign and broadcast the `set-collateral` transaction — use `signable_tx` for Privy, `unsigned_tx` otherwise (signer must be `<wallet>`)
 2. Re-check positions to confirm `collateral_enabled` is now YES
 3. Proceed to borrow
 
 ## Step 6: Sign and broadcast
 
-- Pass the `unsigned_tx` object directly to the external signer.
-- **Do NOT add a `from` field** — the signer determines `from` from the signing key.
-- **Do NOT modify `to`, `data`, `value`, or `chainId`** fields.
+- For Privy: extract `signable_tx` with `jq -c .signable_tx <file>` and pass as `--transaction`.
+- For viem / ethers / non-Privy signers: pass `unsigned_tx` directly.
+- **Do NOT add a `from` field to `unsigned_tx`** — for Privy, switch to `signable_tx` (already has `from`) rather than patching.
+- **Do NOT modify `to`, `data`, `value`, `chainId`, or `nonce`** on whichever object you pick.
+- If `signable_tx` is missing from the CLI output and you need Privy, STOP — upgrade the CLI.
 
 ## Step 7: Post-execution verification
 
@@ -173,9 +195,10 @@ If diagnostics show collateral is NOT enabled and LTV > 0:
 
 ## Common pitfalls
 
+- **Modelling supply as a plain transfer**: The #1 cause of permanent fund loss. ERC-20 `transfer()` to the Aave Pool address mints NO aToken — the tokens are locked forever. Always use `mantle-cli aave supply`. Never route Aave supply through `mantle-cli utils encode-call` / `mantle-cli utils build-tx`.
 - **Missing approve**: supply and repay require prior ERC-20 approval for the Aave Pool.
 - **Missing collateral enablement**: after supply, always verify `collateral_enabled=YES` before borrowing. If it's NO, use `set-collateral` to enable. If `set-collateral` throws `LTV_IS_ZERO`, the asset cannot be used as collateral by governance design.
-- **`from` field in unsigned_tx**: NEVER add `from` — this breaks Privy and some signers.
+- **`from` field in `unsigned_tx`**: NEVER add `from` to `unsigned_tx` — for Privy, use the CLI-emitted `signable_tx` (which already has `from`) instead of hand-patching.
 - **Stale allowance**: use `--owner` flag in approve to auto-skip if sufficient.
 - **Health factor**: borrow and withdraw reduce health factor — check before proceeding.
 - **`max` semantics**: repay max repays full debt; withdraw max withdraws full balance.
